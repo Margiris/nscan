@@ -1,0 +1,9 @@
+[Unit]
+Description=nscan daemon
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/daemon
+
+[Install]
+WantedBy=multi-user.target
