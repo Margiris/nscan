@@ -3,15 +3,15 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
-// #include <sys/stat.h>
 #include <syslog.h>
 #include <errno.h>
 #include <sys/socket.h>
-#include <sys/un.h>
+#include <netinet/in.h>
 #include <sys/time.h>
+#include <arpa/inet.h>
+#include <string.h>
 
-#define NSCAN_DIR "/var/run/nscan/"
-#define default_socket NSCAN_DIR "nscan.socket"
+#define PORT 4242
 
 enum Action
 {

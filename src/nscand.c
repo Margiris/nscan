@@ -10,70 +10,48 @@
 #define WARN(format, ...) syslog(LOG_INFO | LOG_DAEMON, "nscand.c:%d | warning | " format "\n", __LINE__, ##__VA_ARGS__);
 #define INFO(format, ...) syslog(LOG_INFO | LOG_DAEMON, "nscand.c:%d | info | " format "\n", __LINE__, ##__VA_ARGS__);
 
-#define PORT 4242
+void process_received_data(int sockfd, struct nscan_data data_received);
+void exit_daemon(int sockfd, int ret);
 
-int remove_directory(const char *path)
+int main()
 {
-    DIR *d = opendir(path);
-    size_t path_len = strlen(path);
-    int r = -1;
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_addr.s_addr = INADDR_ANY, .sin_port = htons(PORT)};
+    int opt = 1;
+    int addrlen = sizeof(addr);
 
-    if (d)
+    if (daemon(0, 0))
+        ERR(0, "Can't daemonize nscan");
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd <= 0)
+        ERR(sockfd, "Can't create socket");
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)))
+        ERR(sockfd, "Can't set socket options");
+
+    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+        ERR(sockfd, "Can't bind socket to %s", addr.sin_addr.s_addr);
+
+    INFO("nscand daemon started");
+
+    while (1)
     {
-        struct dirent *p;
-        r = 0;
+        struct nscan_data data_received = {0};
 
-        while (!r && (p = readdir(d)))
-        {
-            int r2 = -1;
-            char *buf;
-            size_t len;
+        if (listen(sockfd, 1) < 0)
+            ERR(sockfd, "Can't listen on socket %d (%s)", sockfd, addr.sin_addr.s_addr);
 
-            /* Skip the names "." and ".." as we don't want to recurse on them. */
-            if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, ".."))
-                continue;
+        int data_sockfd = accept(sockfd, (struct sockaddr *)&addr, (socklen_t *)&addrlen);
+        if (data_sockfd < 0)
+            ERR(sockfd, "Can't accept connection");
 
-            len = path_len + strlen(p->d_name) + 2;
-            buf = malloc(len);
+        if (read(data_sockfd, (void *)&data_received, sizeof(data_received)) == -1)
+            WARN("Can't read data");
 
-            if (buf)
-            {
-                struct stat statbuf;
-                snprintf(buf, len, "%s/%s", path, p->d_name);
-
-                if (!stat(buf, &statbuf))
-                {
-                    if (S_ISDIR(statbuf.st_mode))
-                        r2 = remove_directory(buf);
-                    else
-                        r2 = unlink(buf);
-                }
-                free(buf);
-            }
-            r = r2;
-        }
-        closedir(d);
+        process_received_data(data_sockfd, data_received);
     }
 
-    if (!r)
-        r = rmdir(path);
-
-    return r;
-}
-
-void exit_daemon(int sockfd, int ret)
-{
-    if (sockfd > 0)
-    {
-        INFO("Closing sockets...")
-        close(sockfd);
-    }
-
-    if (remove_directory(NSCAN_DIR))
-        WARN("Unable to cleanup. Remove %s before starting nscand again.", NSCAN_DIR);
-
-    INFO("nscand daemon exited.");
-    exit(ret);
+    return -1;
 }
 
 void process_received_data(int sockfd, struct nscan_data data_received)
@@ -92,45 +70,14 @@ void process_received_data(int sockfd, struct nscan_data data_received)
     }
 }
 
-int main()
+void exit_daemon(int sockfd, int ret)
 {
-
-    // _un - UNIX, _in - internet
-    struct sockaddr_un addr = {.sun_family = AF_UNIX, .sun_path = default_socket};
-
-    if (daemon(0, 0))
-        ERR(0, "Can't daemonize nscan");
-
-    // Set safe umask and create directory.
-    umask(0022);
-    if (mkdir(NSCAN_DIR, 0755) < 0)
-        ERR(0, "Can't create directory %s", NSCAN_DIR);
-
-    int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sockfd <= 0)
-        ERR(sockfd, "Can't create socket");
-
-    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-        ERR(sockfd, "Can't bind socket to %s", addr.sun_path);
-
-    INFO("nscand daemon started");
-
-    while (1)
+    if (sockfd > 0)
     {
-        struct nscan_data data_received = {0};
-
-        if (listen(sockfd, 4) < 0)
-            ERR(sockfd, "Can't listen on socket %d (%s)", sockfd, addr.sun_path);
-
-        int data_sockfd = accept(sockfd, 0, 0);
-        if (data_sockfd < 0)
-            ERR(sockfd, "Can't accept connection");
-
-        if (read(data_sockfd, (void *)&data_received, sizeof(data_received)) == -1)
-            WARN("Can't read data");
-
-        process_received_data(data_sockfd, data_received);
+        INFO("Closing sockets...")
+        close(sockfd);
     }
 
-    return -1;
+    INFO("nscand daemon exited.");
+    exit(ret);
 }
