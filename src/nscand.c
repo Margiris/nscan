@@ -82,9 +82,10 @@ void process_received_data(int sockfd, struct nscan_data data_received)
         exit_daemon(sockfd, 0);
     if (data_received.action == ACTION_FULL || data_received.action == ACTION_MINI)
     {
-        struct response response;
-        response.f = 54;
-        response.result = RESULT_SUCCESS;
+        struct response response = {0};
+        response.f = 4;
+        response.result = data_received.action == ACTION_FULL ? RESULT_FAIL : RESULT_SUCCESS;
+        INFO("%d", response.result);
 
         if (write(sockfd, (void *)&response, sizeof(struct response)) < 0)
             WARN("Can't send data to client");
@@ -93,6 +94,7 @@ void process_received_data(int sockfd, struct nscan_data data_received)
 
 int main()
 {
+
     // _un - UNIX, _in - internet
     struct sockaddr_un addr = {.sun_family = AF_UNIX, .sun_path = default_socket};
 
