@@ -1,4 +1,3 @@
-#include <argp.h>
 #include "nscan.h"
 
 #define ERR(format, ...)                                                                            \
@@ -54,20 +53,19 @@ int main(int argc, char *argv[])
         ERR("Invalid address");
 
     if (connect(sockfd, (const struct sockaddr *)&addr, sizeof(addr)) < 0)
-        ERR("Can't connect to nscand daemon. Is it running?");
+        ERR("Can't connect to nscand at %s. Is it running?", arguments.ip_address);
 
     struct nscan_data data = parse_arguments_to_send(arguments);
 
     if (write(sockfd, (void *)&data, sizeof(data)) < 0)
-        ERR("Can't send data to daemon");
+        ERR("Can't send data to nscand");
 
     if (data.action == ACTION_FULL || data.action == ACTION_MINI)
     {
-        printf("test\n");
         struct response resp = {0};
 
         if (read(sockfd, (void *)&resp, sizeof(resp)) == -1)
-            ERR("Can't read response from daemon");
+            ERR("Can't read response from nscand");
 
         printf("%d\n%d\n", resp.result, resp.f);
     }

@@ -1,5 +1,3 @@
-#include <ftw.h>
-#include <dirent.h>
 #include "nscan.h"
 
 #define ERR(sockfd, format, ...)                                                                                \
@@ -19,8 +17,8 @@ int main()
     int opt = 1;
     int addrlen = sizeof(addr);
 
-    if (daemon(0, 0))
-        ERR(0, "Can't daemonize nscan");
+    // if (daemon(0, 0))
+    //     ERR(0, "Can't daemonize nscan");
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd <= 0)
