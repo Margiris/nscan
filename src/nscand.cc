@@ -1,4 +1,5 @@
 #include "nscan.h"
+// #include "../nmap/nmap.cc"
 
 #define ERR(sockfd, format, ...)                                                                                \
     {                                                                                                           \
@@ -13,7 +14,7 @@ void exit_daemon(int sockfd, int ret);
 
 int main()
 {
-    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_addr.s_addr = INADDR_ANY, .sin_port = htons(PORT)};
+    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(PORT), .sin_addr.s_addr = INADDR_ANY};
     int opt = 1;
     int addrlen = sizeof(addr);
 
@@ -58,6 +59,8 @@ void process_received_data(int sockfd, struct nscan_data data_received)
         exit_daemon(sockfd, 0);
     if (data_received.action == ACTION_FULL || data_received.action == ACTION_MINI)
     {
+        // nmap_main(0, NULL);
+
         struct response response = {0};
         response.f = 4;
         response.result = data_received.action == ACTION_FULL ? RESULT_FAIL : RESULT_SUCCESS;
