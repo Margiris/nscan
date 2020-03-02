@@ -54,3 +54,4 @@ dkms.conf
 nscanctl
 nscand
 .vscode/*
+*/nmap/*
