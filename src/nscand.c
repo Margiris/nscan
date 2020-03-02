@@ -28,7 +28,7 @@ int main()
         ERR(sockfd, "Can't set socket options");
 
     if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-        ERR(sockfd, "Can't bind socket to %s", addr.sin_addr.s_addr);
+        ERR(sockfd, "Can't bind socket to %d", addr.sin_addr.s_addr);
 
     INFO("nscand daemon started");
 
@@ -37,7 +37,7 @@ int main()
         struct nscan_data data_received = {0};
 
         if (listen(sockfd, 1) < 0)
-            ERR(sockfd, "Can't listen on socket %d (%s)", sockfd, addr.sin_addr.s_addr);
+            ERR(sockfd, "Can't listen on socket %d (%d)", sockfd, addr.sin_addr.s_addr);
 
         int data_sockfd = accept(sockfd, (struct sockaddr *)&addr, (socklen_t *)&addrlen);
         if (data_sockfd < 0)
