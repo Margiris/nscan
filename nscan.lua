@@ -1,77 +1,51 @@
--- Example script
+local nmap = require "nmap"
+local stdnse = require "stdnse"
+local target = require "target"
 
-description = [[
-Attempts to find the owner of an open TCP port by querying an auth
-(identd - port 113) daemon which must also be open on the target system.
-]]
+package.path = package.path .. ";/usr/lib/lua/?.so"
+local ubus = require "ubus"
 
----
---@output
--- 21/tcp   open     ftp       ProFTPD 1.3.1
--- |_ auth-owners: nobody
--- 22/tcp   open     ssh       OpenSSH 4.3p2 Debian 9etch2 (protocol 2.0)
--- |_ auth-owners: root
--- 25/tcp   open     smtp      Postfix smtpd
--- |_ auth-owners: postfix
--- 80/tcp   open     http      Apache httpd 2.0.61 ((Unix) PHP/4.4.7 ...)
--- |_ auth-owners: dhapache
--- 113/tcp  open     auth?
--- |_ auth-owners: nobody
--- 587/tcp  open     submission Postfix smtpd
--- |_ auth-owners: postfix
--- 5666/tcp open     unknown
--- |_ auth-owners: root
+description = "Takes arguments from console"
 
-author = "Diman Todorov"
+categories = {"discovery"}
 
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
-categories = {"default", "safe"}
+function build_results(argument_list)
+    local new_table = {}
 
-portrule = function(host, port)
-	local auth_port = { number=113, protocol="tcp" }
-	local identd = nmap.get_port_state(host, auth_port)
+    for _, arg in argument_list do
+        local item = {}
+        item.name = ""
+        item.value = arg
 
-	return identd ~= nil
-		and identd.state == "open"
-		and port.protocol == "tcp"
-		and port.state == "open"
+    end
+end
+
+prerule = function()
+	return true
 end
 
 action = function(host, port)
-    local owner = ""
+    result = {}
+    result.output_filename = stdnse.get_script_args({"nscan.filename"})
+    result.interface = stdnse.get_script_args({"nscan.interface"})
+    result.scan_type = stdnse.get_script_args({"nscan.type"})
 
-    local client_ident = nmap.new_socket()
-    local client_service = nmap.new_socket()
-
-    local catch = function()
-            client_ident:close()
-            client_service:close()
-    end
-
-    local try = nmap.new_try(catch)
-
-    try(client_ident:connect(host.ip, 113))
-    try(client_service:connect(host.ip, port.number))
-
-    local localip, localport, remoteip, remoteport =
-            try(client_service:get_info())
-
-    local request = port.number .. ", " .. localport .. "\r\n"
-
-    try(client_ident:send(request))
-
-    owner = try(client_ident:receive_lines(1))
-
-    if string.match(owner, "ERROR") then 
-            owner = nil
-    else
-            owner = string.match(owner,
-                    "%d+%s*,%s*%d+%s*:%s*USERID%s*:%s*.+%s*:%s*(.+)\r?\n")
-    end
-
-    try(client_ident:close())
-    try(client_service:close())
-
-    return owner
+    targets = {}
+    targets[1] = "192.168.1.214"
+    
+    -- temporarily enable adding new targets irrespective of script arguments and save old value for restoring later
+    local old_ALLOW_NEW_TARGETS = target.ALLOW_NEW_TARGETS
+    target.ALLOW_NEW_TARGETS = true
+    -- for _, item in ipairs(targets) do
+    --     local st, err = target.add(item)
+    --     if not st then
+    --         print("\n\nCouldn't add target " .. item .. ": " .. err .."\n\n")
+    --     end
+    -- end
+    -- restore ALLOW_NEW_TARGETS state
+    target.ALLOW_NEW_TARGETS = old_ALLOW_NEW_TARGETS
+    
+    return result
 end
