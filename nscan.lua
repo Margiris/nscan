@@ -2,8 +2,9 @@ local nmap = require "nmap"
 local stdnse = require "stdnse"
 local target = require "target"
 
-package.path = package.path .. ";/usr/lib/lua/?.so"
+package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
 local ubus = require "ubus"
+-- print(ubus.version())
 
 description = "Takes arguments from console"
 
