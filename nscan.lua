@@ -30,7 +30,10 @@ function recurse_table_to_json_string(tbl, filter, indentation, prefix_key)
 
     filter = filter or {}
     indentation = indentation or ""
-    prefix_key = not (not prefix_key or false)
+    if not prefix_key then
+        prefix_key = true
+    end
+
     local result = ""
     for k, v in pairs(tbl) do
         if (type(v) == "table") then
@@ -42,10 +45,12 @@ function recurse_table_to_json_string(tbl, filter, indentation, prefix_key)
             end
         else
             if next(filter) == nil or contains(filter, k) then
-                if prefix_key then
-                    result = result .. indentation .. k .. " = "
+                if not prefix_key then
+                    k = ""
+                else
+                    k = k .. " = "
                 end
-                result = result .. tostring(v) .. "\n"
+                result = result .. indentation .. k .. tostring(v) .. "\n"
             end
         end
     end
@@ -78,7 +83,7 @@ function get_network_interface_data(ubus_connection, device_name)
 end
 
 function get_vlans(ubus_connection, device_name)
-    local dump = ubus_connection:call("uci", "get", { config="network", section="@switch_vlan[0]"})
+    local dump = ubus_connection:call("uci", "get", { config="network"})
 
     return dump
 end
