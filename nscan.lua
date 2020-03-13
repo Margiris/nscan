@@ -6,9 +6,10 @@ description = "Takes arguments from console"
 categories = {"discovery"}
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
-function contains(tbl, value)
+function contains(tbl, value, full_match)
+    full_match = full_match or false
     for _, v in pairs(tbl) do
-        if v == value then
+        if (full_match and v == value) or (not full_match and string.find(value, v, 1, true)) then
             return true
         end
     end
@@ -23,16 +24,32 @@ function get_table_keys_list(tbl)
     return keyset
 end
 
+--[[
+    @param table tbl: table to recurse.
+    [@param table filter: table to filter tbl with, containing:
+        [boolean: filter[1]: boolean if string must match fully. Default: false],
+        filter[2, ..]: strings to filter in (as opposed to filter out).
+    If empty, no filtering is done. Default: {}]
+    [@param string intentation: string to use as indentation to represent hierarchy in the table. Default: ""]
+    [prefix_key: boolean whether to prefix value with key. Default: true]
+--]]
 function recurse_table_to_json_string(tbl, filter, indentation, prefix_key)
     if not tbl then
         return "\n*** Table is nil ***\n"
     end
 
+
     filter = filter or {}
+    if next(filter) ~= nil and type(filter[1]) ~= "boolean" then
+        table.insert(filter, 1, false)
+    end
+
     indentation = indentation or ""
+
     if not prefix_key then
         prefix_key = true
     end
+
 
     local result = ""
     for k, v in pairs(tbl) do
@@ -44,11 +61,11 @@ function recurse_table_to_json_string(tbl, filter, indentation, prefix_key)
                 end
             end
         else
-            if next(filter) == nil or contains(filter, k) then
-                if not prefix_key then
-                    k = ""
-                else
+            if next(filter) == nil or contains({table.unpack(filter, 2, #filter)}, k, filter[1]) then
+                if prefix_key then
                     k = k .. " = "
+                else
+                    k = ""
                 end
                 result = result .. indentation .. k .. tostring(v) .. "\n"
             end
@@ -121,14 +138,16 @@ prerule = function()
     end
 
     local args = get_arguments()
-
-    -- local device_info = get_network_devices_info(conn, args.interface)
-    -- print(recurse_table_to_json_string(device_info, {}, "", true))
-
+    --[[
+    local device_info = get_network_devices_info(conn, args.interface)
+    print(recurse_table_to_json_string(device_info, {}, "", true))
+    --]]
+    --[[
     -- local if_data = get_network_interface_data(conn, args.interface)
-    -- print(recurse_table_to_json_string(if_data.interface, {"l3_device", "interface", "mask", "address"}))
-
+    -- print(recurse_table_to_json_string(if_data.interface, {true, "l3_device", "interface", "mask", "address"}))
+    --]]
     local dump = get_vlans(conn)
+    print(recurse_table_to_json_string(get_table_keys_list(dump.values)))
     print(recurse_table_to_json_string(dump))
 
     conn:close()
