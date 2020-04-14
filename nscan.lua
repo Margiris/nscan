@@ -112,26 +112,23 @@ local function get_interfaces_with_IPs(ubus_connection)
     return interfaces_with_IPs
 end
 
-local function add_targets(ip_str, mask)
+local function add_targets(ip, mask)
     local target = require "target"
 
     local success = true
     local targets = {}
 
-    local ip = convert_to("table", ip_str)
-    local ip_min = Find_subnet_min_max(ip, mask, 0)
-    local ip_max = Find_subnet_min_max(ip, mask, 1)
-    print(convert_to("string", ip_min))
-    print(convert_to("string", ip_max))
-    print()
-    -- for i = 1, 2 ^ (32 - mask), -1 do targets[i] = ip end
+    for ip_s in IPv4_iter(ip, mask) do table.insert(targets, ip_s) end
 
-    targets[1] = "192.168.1.214"
+    print(convert_to("string", Find_subnet_min_max(ip, mask, 0)))
+    print(convert_to("string", Find_subnet_min_max(ip, mask, 1)))
+    print()
+
     -- temporarily enable adding new targets irrespective of script arguments and save old value for restoring later
     local old_ALLOW_NEW_TARGETS = target.ALLOW_NEW_TARGETS
     target.ALLOW_NEW_TARGETS = true
 
-    for _, item in ipairs(targets) do
+    for _, item in pairs(targets) do
         local st, err = target.add(item)
 
         if not st then
@@ -161,9 +158,7 @@ prerule = function()
     -- print(rt(get_wifi_info(conn)))
     conn:close()
 
-    -- add_targets(interfaces_with_IPs["br-lan"].address, interfaces_with_IPs["br-lan"].mask)
-
-    Test()
+    add_targets(interfaces_with_IPs["br-lan"].address, interfaces_with_IPs["br-lan"].mask)
 
     return true
 end
@@ -271,8 +266,8 @@ function Find_subnet_min_max(ip_in, mask, min_max)
 end
 
 function IPv4_iter(ip_in, mask)
-    local ip = Find_subnet_min_max(ip_in, mask, 0)
-    local count = 2 ^ (32 - mask) - 2
+    local ip = convert_to("number", Find_subnet_min_max(ip_in, mask, 0)) - 1
+    local count = 2 ^ (32 - mask) - 1
     -- local max = find_subnet_min_max(ip, mask, 1)
     return function()
         ip = ip + 1
@@ -282,16 +277,25 @@ function IPv4_iter(ip_in, mask)
 end
 
 function Test()
-    local ip_str = "22.95.227.62"
     local mask = 28
-
-    -- local ip = convert_to("table", ip_str)
-    local ip = convert_to(ip_str)
+    local ip_str = "22.95.227.62"
+    local ip = convert_to("table", ip_str)
     local ip2 = convert_to("number", ip_str)
-    local a = {ip_str, ip, ip2}
+
+    local a, b, c = {}, {}, {}
+
+    for ip_s in IPv4_iter(ip_str, mask) do table.insert(a, ip_s) end
+    for ip_t in IPv4_iter(ip, mask) do table.insert(b, ip_t) end
+    for ip_n in IPv4_iter(ip2, mask) do table.insert(c, ip_n) end
+
+    print()
+    print(convert_to("string", Find_subnet_min_max(ip_str, mask, 0)))
+    for i = 1, #a do print(a[i], b[i], c[i]) end
+    print(convert_to("string", Find_subnet_min_max(ip_str, mask, 1)))
+    print()
+    print(#a)
     print()
 
-    -- for ip in IPv4_iter(ip_str) do print(ip) end
 end
 ----------------------------------------------------------------------
 
