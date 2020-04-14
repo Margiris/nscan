@@ -82,7 +82,14 @@ end
 function get_arguments()
     local args = {}
     args.output_filename = stdnse.get_script_args({"nscan.filename"})
-    args.list_interfaces = stdnse.get_script_args({"nscan.list-interfaces"})
+
+    local list_interfaces = stdnse.get_script_args({"nscan.list-interfaces"})
+    if list_interfaces == 1 then
+        args.list_interfaces = true
+    else
+        args.list_interfaces = false
+    end
+
     args.scan_type = stdnse.get_script_args({"nscan.type"})
     return args
 end
@@ -106,18 +113,16 @@ end
 
 function add_targets(ip_str, mask)
     local target = require "target"
-    local ip_utils = require "ip_utils"
 
     success = true
     targets = {}
 
-    local ip = ip_utils.convert_IPv4_str_to_table(ip_str)
-    local ip_min = ip_utils.find_subnet_min_max(ip, mask, 0)
-    local ip_max = ip_utils.find_subnet_min_max(ip, mask, 1)
-    print(ip_utils.table_to_IPv4_str(ip_min))
-    print(ip_utils.table_to_IPv4_str(ip_max))
+    local ip = IPv4_str2table(ip_str)
+    local ip_min = find_subnet_min_max(ip, mask, 0)
+    local ip_max = find_subnet_min_max(ip, mask, 1)
+    print(table_to_IPv4_str(ip_min))
+    print(table_to_IPv4_str(ip_max))
     print()
-    print(#ip_min)
     -- for i = 1, 2 ^ (32 - mask), -1 do targets[i] = ip end
 
     targets[1] = "192.168.1.214"
@@ -157,69 +162,106 @@ prerule = function()
 
     -- add_targets(interfaces_with_IPs["br-lan"].address, interfaces_with_IPs["br-lan"].mask)
 
-    local ip_utils = require "ip_utils"
-    ip_utils:test()
+    test()
 
     return true
 end
 
 action = function(host, port) return 0 end
 
----------------------------- IP functions ----------------------------
-function convert_IPv4_str_to_table(ip_str)
-    print(ip_str)
+--[[------------------------ IP functions ----------------------------
+    3 supported data types for IPs:
+        - string, e.g. "192.168.1.1"
+        - table with each value representing one bit in the IP address. Indexing starts from the leftmost digit. E.g. {1 1 0 0 0 0 0 0 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1}.
+        - number representing IP in binary form converted to base 10, e.g. 3232235777
+    All conversion functions assume correct argument type. All other functions do conversion automatically.
+    All functions assume correct value of each passed argument type.
+]]
 
-    local ip_bin = {}
-    local octet_index = 0
+do -- conversion functions
+    local function IPv4_str2table(ip_str)
 
-    ip_str:gsub("%d+", function(octet)
-        for i = 8, 1, -1 do
-            ip_bin[i + octet_index * 8] = math.floor(octet % 2)
-            octet = octet // 2
-        end
+        local ip_bin = {}
+        local octet_index = 0
 
-        octet_index = octet_index + 1
-    end)
+        ip_str:gsub("%d+", function(octet)
+            for i = 8, 1, -1 do
+                ip_bin[i + octet_index * 8] = math.floor(octet % 2)
+                octet = octet // 2
+            end
 
-    return ip_bin
-end
+            octet_index = octet_index + 1
+        end)
 
-function convert_IPv4_str_to_decimal(ip_str)
-    print(ip_str)
-
-    local ip_dec = 0
-    local octet_index = 0
-
-    ip_str:gsub("%d+", function(octet)
-        for i = 8, 1, -1 do
-            ip_dec = ip_dec * 2 + math.floor(octet % 2)
-            octet = octet // 2
-        end
-
-        octet_index = octet_index + 1
-    end)
-
-    return ip_dec
-end
-
-function table_to_IPv4_str(ip_bin)
-    local ip = {}
-    for o = 0, 3 do
-        local octet = 0
-        for i = 1, 8 do octet = octet * 2 + ip_bin[i + o * 8] end
-        ip[o + 1] = octet
+        return ip_bin
     end
 
-    return ip[1] .. "." .. ip[2] .. "." .. ip[3] .. "." .. ip[4]
+    local function table2IPv4_str(ip_bin)
+        local ip = {}
+        for o = 0, 3 do
+            local octet = 0
+            for i = 1, 8 do octet = octet * 2 + ip_bin[i + o * 8] end
+            ip[o + 1] = octet
+        end
+
+        return ip[1] .. "." .. ip[2] .. "." .. ip[3] .. "." .. ip[4]
+    end
+
+    local function IPv4_str2int(ip_str)
+        local ip_dec = 0
+        local octet_index = 3
+
+        ip_str:gsub("%d+", function(octet)
+            ip_dec = ip_dec + octet * 256 ^ octet_index
+            octet_index = octet_index - 1
+        end)
+
+        return math.floor(ip_dec)
+    end
+
+    local function int2IPv4_str(ip_dec)
+        local octets = {}
+        for i = 1, 4 do
+            octets[i] = ip_dec % 256
+            ip_dec = (ip_dec - octets[i]) // 256
+        end
+
+        return octets[4] .. "." .. octets[3] .. "." .. octets[2] .. "." .. octets[1]
+    end
+
+    local n = {
+        number = function(ip) return ip end,
+        string = function(ip) return IPv4_str2int(ip) end,
+        table = function(ip) return IPv4_str2int(table2IPv4_str(ip)) end
+    }
+    local s = {
+        number = function(ip) return int2IPv4_str(ip) end,
+        string = function(ip) return ip end,
+        table = function(ip) return table2IPv4_str(ip) end
+    }
+    local t = {
+        number = function(ip) return IPv4_str2table(int2IPv4_str(ip)) end,
+        string = function(ip) return IPv4_str2table(ip) end,
+        table = function(ip) return ip end
+    }
+    local conv = {
+        number = function(ip) return n[type(ip)](ip) end,
+        string = function(ip) return s[type(ip)](ip) end,
+        table = function(ip) return t[type(ip)](ip) end
+    }
+
+    function convert_to(type, ip) return conv[type](ip) end
 end
 
 --[[
-    Find max or min subnet IP from given IP and mask.
-    ip_in_subnet - 
-    mask - 
-    min_max - 0 if min, 1 if max
-]]
-function find_subnet_min_max(ip_in_subnet, mask, min_max)
+        Find max or min subnet IP from given IP and mask.
+        ip_in_subnet - 
+        mask - 
+        min_max - 0 if min, 1 if max
+    ]]
+function find_subnet_min_max(ip_in, mask, min_max)
+    local ip_in_subnet = convert_to("table", ip_in)
+
     local ip = {}
     for i = 1, mask do ip[i] = ip_in_subnet[i] end
     for i = mask + 1, 31 do ip[i] = min_max end
@@ -227,82 +269,85 @@ function find_subnet_min_max(ip_in_subnet, mask, min_max)
     return ip
 end
 
-function IPv4_iter(ip, mask)
-    local start = find_subnet_min_max(ip, mask, 0)
+function IPv4_iter(ip_in, mask)
+    local ip = find_subnet_min_max(ip, mask, 0)
     local count = 2 ^ (32 - mask) - 2
     -- local max = find_subnet_min_max(ip, mask, 1)
     return function()
+        ip = ip + 1
         count = count - 1
-        if count > 0 then return min end
+        if count > 0 then return convert_to("string", ip) end
     end
 end
 
 function test()
-    local ip_str = "192.168.1.48"
-    local mask = 22
+    local ip_str = "22.95.227.62"
+    local mask = 28
 
-    local ip = convert_IPv4_str_to_table(ip_str)
-
-    -- print(table_to_IPv4_str(find_subnet_min_max(ip, mask, 0)))
-    -- print(table_to_IPv4_str(find_subnet_min_max(ip, mask, 1)))
+    -- local ip = convert_to("table", ip_str)
+    local ip = convert_to(ip_str)
+    local ip2 = convert_to("number", ip_str)
+    local a = {ip_str, ip, ip2}
     print()
-    print(convert_IPv4_str_to_decimal(ip))
+
+    -- for ip in IPv4_iter(ip_str) do print(ip) end
 end
 ----------------------------------------------------------------------
 
--------------------------------- Shit --------------------------------
 --[[
-function get_network_devices_info(ubus_connection, device_name)
-    local temp = {}
-    if device_name ~= "" and device_name ~= "--list" and device_name ~= "--all" then
-        temp.name = device_name
+do ----------------------------- Shit --------------------------------
+
+    function get_network_devices_info(ubus_connection, device_name)
+        local temp = {}
+        if device_name ~= "" and device_name ~= "--list" and device_name ~= "--all" then
+            temp.name = device_name
+        end
+
+        local device_list = ubus_connection:call("network.device", "status", temp)
+        print(rt(device_list))
+        if temp.name == nil then return get_keys_list_from_table(device_list) end
+        return device_list
     end
 
-    local device_list = ubus_connection:call("network.device", "status", temp)
-    print(rt(device_list))
-    if temp.name == nil then return get_keys_list_from_table(device_list) end
-    return device_list
-end
+    function get_network_interface_data(ubus_connection, device_name)
+        return ubus_connection:call("network.interface." .. device_name, "dump", {})
+    end
 
-function get_network_interface_data(ubus_connection, device_name)
-    return ubus_connection:call("network.interface." .. device_name, "dump", {})
-end
+    function get_wifi_info(ubus_connection)
+        local wifi_info = ubus_connection:call("network.wireless", "status", {})
+        -- print(rt(wifi_info))
 
-function get_wifi_info(ubus_connection)
-    local wifi_info = ubus_connection:call("network.wireless", "status", {})
-    -- print(rt(wifi_info))
+        local interfaces_on_networks = {}
+        local interfaces = {}
 
-    local interfaces_on_networks = {}
-    local interfaces = {}
-
-    for _, radio in pairs(wifi_info) do
-        for _, interface in pairs(radio.interfaces) do
-            table.insert(interfaces, interface.ifname)
-            if interface.config.network ~= nil then
-                for _, network in pairs(interface.config.network) do
-                    interfaces_on_networks[network] = 1
-                    -- print(k, network)
+        for _, radio in pairs(wifi_info) do
+            for _, interface in pairs(radio.interfaces) do
+                table.insert(interfaces, interface.ifname)
+                if interface.config.network ~= nil then
+                    for _, network in pairs(interface.config.network) do
+                        interfaces_on_networks[network] = 1
+                        -- print(k, network)
+                    end
                 end
             end
         end
+
+        -- print(interfaces_on_networks)
+        return interfaces_on_networks
     end
 
-    -- print(interfaces_on_networks)
-    return interfaces_on_networks
-end
+    function get_vlans(ubus_connection, device_name)
+        local dump = ubus_connection:call("uci", "get", {config = "network"})
 
-function get_vlans(ubus_connection, device_name)
-    local dump = ubus_connection:call("uci", "get", {config = "network"})
-
-    return dump
-end
+        return dump
+    end
 
     local if_data = get_network_interface_data(conn, args.interface)
     print(rt(if_data.interface, {true, "l3_device", "interface", "mask", "address"}))
-    
-    
+
     local dump = get_vlans(conn)
     print(rt(get_keys_list_from_table(dump.values)))
     print(rt(dump.values))
-    
+
+end
 --]]
