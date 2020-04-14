@@ -5,7 +5,7 @@ description = "Takes arguments from console"
 categories = {"discovery"}
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
-function contains(tbl, value, full_match)
+local function contains(tbl, value, full_match)
     full_match = full_match or false
     for _, v in pairs(tbl) do
         if (full_match and v == value) or (not full_match and string.find(value, v, 1, true)) then
@@ -15,7 +15,7 @@ function contains(tbl, value, full_match)
     return false
 end
 
-function get_keys_list_from_table(tbl)
+local function get_keys_list_from_table(tbl)
     local keyset = {}
     for k, _ in pairs(tbl) do table.insert(keyset, k) end
     return keyset
@@ -31,7 +31,8 @@ end
     [prefix_key: boolean whether to prefix value with key. Default: true. Overriden by: one_line]
     [one_line: boolean whether to print all values in one line. If true, overrides prefix_key to false. Default: true]
 --]]
-function recurse_table_to_json_string(tbl, filter, indentation, prefix_key, one_line, level)
+local function recurse_table_to_json_string(tbl, filter, indentation, prefix_key, one_line,
+                                            level)
     if not tbl then return "\n*** Table is nil ***\n" end
 
     filter = filter or {}
@@ -75,11 +76,11 @@ function recurse_table_to_json_string(tbl, filter, indentation, prefix_key, one_
 end
 
 -- Shorthand for recurse_table_to_json_string().
-function rt(tbl, filter, indentation, prefix_key, level)
+local function rt(tbl, filter, indentation, prefix_key, level)
     return recurse_table_to_json_string(tbl, filter, indentation, prefix_key, level)
 end
 
-function get_arguments()
+local function get_arguments()
     local args = {}
     args.output_filename = stdnse.get_script_args({"nscan.filename"})
 
@@ -94,15 +95,15 @@ function get_arguments()
     return args
 end
 
-function get_network_interface_list(ubus_connection)
+local function get_network_interface_list(ubus_connection)
     local a = ubus_connection:call("network.device", "status", {})
     -- print(rt(a))
 
     return get_keys_list_from_table(ubus_connection:call("network.device", "status", {}))
 end
 
-function get_interfaces_with_IPs(ubus_connection)
-    interfaces_with_IPs = {}
+local function get_interfaces_with_IPs(ubus_connection)
+    local interfaces_with_IPs = {}
     for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
         if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
             for _, a in pairs(v["ipv4-address"]) do interfaces_with_IPs[v.device] = a end
@@ -111,17 +112,17 @@ function get_interfaces_with_IPs(ubus_connection)
     return interfaces_with_IPs
 end
 
-function add_targets(ip_str, mask)
+local function add_targets(ip_str, mask)
     local target = require "target"
 
-    success = true
-    targets = {}
+    local success = true
+    local targets = {}
 
-    local ip = IPv4_str2table(ip_str)
-    local ip_min = find_subnet_min_max(ip, mask, 0)
-    local ip_max = find_subnet_min_max(ip, mask, 1)
-    print(table_to_IPv4_str(ip_min))
-    print(table_to_IPv4_str(ip_max))
+    local ip = convert_to("table", ip_str)
+    local ip_min = Find_subnet_min_max(ip, mask, 0)
+    local ip_max = Find_subnet_min_max(ip, mask, 1)
+    print(convert_to("string", ip_min))
+    print(convert_to("string", ip_max))
     print()
     -- for i = 1, 2 ^ (32 - mask), -1 do targets[i] = ip end
 
@@ -162,7 +163,7 @@ prerule = function()
 
     -- add_targets(interfaces_with_IPs["br-lan"].address, interfaces_with_IPs["br-lan"].mask)
 
-    test()
+    Test()
 
     return true
 end
@@ -259,7 +260,7 @@ end
         mask - 
         min_max - 0 if min, 1 if max
     ]]
-function find_subnet_min_max(ip_in, mask, min_max)
+function Find_subnet_min_max(ip_in, mask, min_max)
     local ip_in_subnet = convert_to("table", ip_in)
 
     local ip = {}
@@ -270,7 +271,7 @@ function find_subnet_min_max(ip_in, mask, min_max)
 end
 
 function IPv4_iter(ip_in, mask)
-    local ip = find_subnet_min_max(ip, mask, 0)
+    local ip = Find_subnet_min_max(ip_in, mask, 0)
     local count = 2 ^ (32 - mask) - 2
     -- local max = find_subnet_min_max(ip, mask, 1)
     return function()
@@ -280,7 +281,7 @@ function IPv4_iter(ip_in, mask)
     end
 end
 
-function test()
+function Test()
     local ip_str = "22.95.227.62"
     local mask = 28
 
@@ -297,7 +298,7 @@ end
 --[[
 do ----------------------------- Shit --------------------------------
 
-    function get_network_devices_info(ubus_connection, device_name)
+    function Get_network_devices_info(ubus_connection, device_name)
         local temp = {}
         if device_name ~= "" and device_name ~= "--list" and device_name ~= "--all" then
             temp.name = device_name
@@ -309,11 +310,11 @@ do ----------------------------- Shit --------------------------------
         return device_list
     end
 
-    function get_network_interface_data(ubus_connection, device_name)
+    function Get_network_interface_data(ubus_connection, device_name)
         return ubus_connection:call("network.interface." .. device_name, "dump", {})
     end
 
-    function get_wifi_info(ubus_connection)
+    function Get_wifi_info(ubus_connection)
         local wifi_info = ubus_connection:call("network.wireless", "status", {})
         -- print(rt(wifi_info))
 
@@ -336,18 +337,18 @@ do ----------------------------- Shit --------------------------------
         return interfaces_on_networks
     end
 
-    function get_vlans(ubus_connection, device_name)
+    function Get_vlans(ubus_connection, device_name)
         local dump = ubus_connection:call("uci", "get", {config = "network"})
 
         return dump
     end
 
-    local if_data = get_network_interface_data(conn, args.interface)
+    local if_data = Get_network_interface_data(conn, args.interface)
     print(rt(if_data.interface, {true, "l3_device", "interface", "mask", "address"}))
 
-    local dump = get_vlans(conn)
+    local dump = Get_vlans(conn)
     print(rt(get_keys_list_from_table(dump.values)))
     print(rt(dump.values))
 
 end
---]]
+-- ]]
