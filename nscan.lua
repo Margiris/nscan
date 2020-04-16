@@ -15,12 +15,6 @@ local function contains(tbl, value, full_match)
     return false
 end
 
-local function get_keys_list_from_table(tbl)
-    local keyset = {}
-    for k, _ in pairs(tbl) do table.insert(keyset, k) end
-    return keyset
-end
-
 --[[
     @param table tbl: table to recurse.
     [@param table filter: table to filter tbl with, containing:
@@ -28,11 +22,9 @@ end
         filter[2, ..]: strings to filter in (as opposed to filter out).
     If empty, no filtering is done. Default: {}]
     [@param string intentation: string to use as indentation to represent hierarchy in the table. Default: "\t"]
-    [prefix_key: boolean whether to prefix value with key. Default: true. Overriden by: one_line]
-    [one_line: boolean whether to print all values in one line. If true, overrides prefix_key to false. Default: true]
+    [minify: boolean whether to minify the JSON string. Default: true]
 --]]
-local function recurse_table_to_json_string(tbl, filter, indentation, prefix_key, one_line,
-                                            level)
+local function recurse_table_to_JSON(tbl, filter, indentation, minify, level)
     if not tbl then return "\n*** Table is nil ***\n" end
 
     filter = filter or {}
@@ -43,19 +35,12 @@ local function recurse_table_to_json_string(tbl, filter, indentation, prefix_key
     indentation = indentation or "\t"
     level = level or 0
 
-    if prefix_key == nil then
-        prefix_key = true
-    elseif one_line then
-        prefix_key = false
-    end
-
+    local newline = minify and "" or "\n"
     local result = ""
-    local newline = one_line and "" or "\n"
     for k, v in pairs(tbl) do
         if (type(v) == "table") then
             if next(v) ~= nil or next(v) == nil then -- only recurse if table is not empty
-                local deeper = recurse_table_to_json_string(v, filter, indentation, prefix_key,
-                                                            one_line, level + 1)
+                local deeper = recurse_table_to_JSON(v, filter, indentation, minify, level + 1)
                 if deeper ~= "" or next(filter) == nil then -- suppress empty table titles if filtering is used
                     result = result .. string.rep(indentation, level) .. k .. ": " .. newline ..
                                  deeper
@@ -63,8 +48,8 @@ local function recurse_table_to_json_string(tbl, filter, indentation, prefix_key
             end
         else
             if next(filter) == nil or contains({table.unpack(filter, 2, #filter)}, k, filter[1]) then
-                if prefix_key then
-                    k = k .. " = "
+                if minify then
+                    k = "\"" .. k .. "\":"
                 else
                     k = ""
                 end
@@ -72,35 +57,26 @@ local function recurse_table_to_json_string(tbl, filter, indentation, prefix_key
             end
         end
     end
-    return result
+    return "{devices: [" .. newline .. result .. "]" .. newline .. "}"
 end
-
 -- Shorthand for recurse_table_to_json_string().
-local function rt(tbl, filter, indentation, prefix_key, level)
-    return recurse_table_to_json_string(tbl, filter, indentation, prefix_key, level)
+local function rt(tbl, filter, indentation, minify)
+    return recurse_table_to_JSON(tbl, filter, indentation, minify)
 end
 
-local function get_arguments()
-    local args = {}
-    args.output_filename = stdnse.get_script_args({"nscan.filename"})
+-- local function get_arguments()
+--     local args = {}
+--     args.output_filename = stdnse.get_script_args({"nscan.filename"})
+--     args.interface = stdnse.get_script_args({"nscan.interface"})
+--     args.scan_type = stdnse.get_script_args({"nscan.type"})
+--     return args
+-- end
 
-    local list_interfaces = stdnse.get_script_args({"nscan.list-interfaces"})
-    if list_interfaces == 1 then
-        args.list_interfaces = true
-    else
-        args.list_interfaces = false
-    end
-
-    args.scan_type = stdnse.get_script_args({"nscan.type"})
-    return args
-end
-
-local function get_network_interface_list(ubus_connection)
-    local a = ubus_connection:call("network.device", "status", {})
-    -- print(rt(a))
-
-    return get_keys_list_from_table(ubus_connection:call("network.device", "status", {}))
-end
+local arguments_map = {
+    output_filename = stdnse.get_script_args({"nscan.filename"}),
+    interface = stdnse.get_script_args({"nscan.interface"}),
+    scan_type = stdnse.get_script_args({"nscan.type"})
+}
 
 local function get_interfaces_with_IPs(ubus_connection)
     local interfaces_with_IPs = {}
@@ -110,6 +86,17 @@ local function get_interfaces_with_IPs(ubus_connection)
         end
     end
     return interfaces_with_IPs
+end
+
+local function get_manufacturer(mac_str)
+    local datafiles = require "datafiles"
+    local nmap = require "nmap"
+
+    local catch = function() return "Unknown" end
+    local try = nmap.new_try(catch)
+    local mac_prefixes = try(datafiles.parse_mac_prefixes())
+    local prefix = string.upper(string.sub(mac_str:gsub(':', ''), 1, 6))
+    return mac_prefixes[prefix] or "Unknown"
 end
 
 local function add_targets(ip, mask)
@@ -148,22 +135,38 @@ prerule = function()
     local ubus = require "ubus_5_3"
     local conn = ubus.connect()
     if not conn then error("Failed to connect to ubusd") end
-    local args = get_arguments()
 
     local interfaces_with_IPs = get_interfaces_with_IPs(conn)
-    if args.list_interfaces then print(rt(interfaces_with_IPs)) end
 
-    -- print(rt(get_network_interface_list(conn)))
-
-    -- print(rt(get_wifi_info(conn)))
     conn:close()
 
-    add_targets(interfaces_with_IPs["br-lan"].address, interfaces_with_IPs["br-lan"].mask)
+    if arguments_map.interface == "--list" then
+        print(rt(interfaces_with_IPs))
+    else
+        add_targets(interfaces_with_IPs[arguments_map.interface].address,
+                    interfaces_with_IPs[arguments_map.interface].mask)
+    end
 
-    return true
+    return false
 end
 
-action = function(host, port) return 0 end
+hostrule = function(host) return host.interface == arguments_map.interface end
+
+postrule = function()
+    -- Finish writing to file, report state as finished
+end
+
+action = function(host, port)
+    print(rt(host))
+    local ip_addr = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, ".")
+    local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
+                                   string.byte(host.mac_addr, 1, #host.mac_addr))
+
+    print("IP: " .. ip_addr, "MAC: " .. mac_addr, "Vendor: " .. get_manufacturer(mac_addr))
+    print("-----------------------------------------------------------------------------")
+    -- return "IP: " .. ip_addr .. "\tMAC: " .. mac_addr
+    return 0
+end
 
 --[[------------------------ IP functions ----------------------------
     3 supported data types for IPs:
@@ -193,14 +196,14 @@ do -- conversion functions
     end
 
     local function table2IPv4_str(ip_bin)
-        local ip = {}
-        for o = 0, 3 do
+        local octets = {}
+        for o = 1, 4 do
             local octet = 0
-            for i = 1, 8 do octet = octet * 2 + ip_bin[i + o * 8] end
-            ip[o + 1] = octet
+            for i = 1, 8 do octet = octet * 2 + ip_bin[i + (o - 1) * 8] end
+            octets[o] = octet
         end
 
-        return ip[1] .. "." .. ip[2] .. "." .. ip[3] .. "." .. ip[4]
+        return table.concat(octets, ".")
     end
 
     local function IPv4_str2int(ip_str)
@@ -217,12 +220,12 @@ do -- conversion functions
 
     local function int2IPv4_str(ip_dec)
         local octets = {}
-        for i = 1, 4 do
+        for i = 4, 1, -1 do
             octets[i] = ip_dec % 256
             ip_dec = (ip_dec - octets[i]) // 256
         end
 
-        return octets[4] .. "." .. octets[3] .. "." .. octets[2] .. "." .. octets[1]
+        return table.concat(octets, ".")
     end
 
     local n = {
@@ -302,7 +305,20 @@ end
 --[[
 do ----------------------------- Shit --------------------------------
 
-    function Get_network_devices_info(ubus_connection, device_name)
+    local function get_keys_list_from_table(tbl)
+        local keyset = {}
+        for k, _ in pairs(tbl) do table.insert(keyset, k) end
+        return keyset
+    end
+
+    local function get_network_interface_list(ubus_connection)
+        local a = ubus_connection:call("network.device", "status", {})
+        -- print(rt(a))
+
+        return get_keys_list_from_table(ubus_connection:call("network.device", "status", {}))
+    end
+
+    local function Get_network_devices_info(ubus_connection, device_name)
         local temp = {}
         if device_name ~= "" and device_name ~= "--list" and device_name ~= "--all" then
             temp.name = device_name
@@ -314,11 +330,11 @@ do ----------------------------- Shit --------------------------------
         return device_list
     end
 
-    function Get_network_interface_data(ubus_connection, device_name)
+    local function Get_network_interface_data(ubus_connection, device_name)
         return ubus_connection:call("network.interface." .. device_name, "dump", {})
     end
 
-    function Get_wifi_info(ubus_connection)
+    local function Get_wifi_info(ubus_connection)
         local wifi_info = ubus_connection:call("network.wireless", "status", {})
         -- print(rt(wifi_info))
 
@@ -341,7 +357,7 @@ do ----------------------------- Shit --------------------------------
         return interfaces_on_networks
     end
 
-    function Get_vlans(ubus_connection, device_name)
+    local function Get_vlans(ubus_connection, device_name)
         local dump = ubus_connection:call("uci", "get", {config = "network"})
 
         return dump
