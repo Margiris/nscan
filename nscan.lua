@@ -1,76 +1,10 @@
 -- local nmap = require "nmap"
 local stdnse = require "stdnse"
+local json = require "json"
 
 description = "Takes arguments from console"
 categories = {"discovery"}
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
-
-local function contains(tbl, value, full_match)
-    full_match = full_match or false
-    for _, v in pairs(tbl) do
-        if (full_match and v == value) or (not full_match and string.find(value, v, 1, true)) then
-            return true
-        end
-    end
-    return false
-end
-
---[[
-    @param table tbl: table to recurse.
-    [@param table filter: table to filter tbl with, containing:
-        [boolean: filter[1]: boolean if string must match fully. Default: false],
-        filter[2, ..]: strings to filter in (as opposed to filter out).
-    If empty, no filtering is done. Default: {}]
-    [@param string intentation: string to use as indentation to represent hierarchy in the table. Default: "\t"]
-    [minify: boolean whether to minify the JSON string. Default: true]
---]]
-local function recurse_table_to_JSON(tbl, filter, indentation, minify, level)
-    if not tbl then return "\n*** Table is nil ***\n" end
-
-    filter = filter or {}
-    if next(filter) ~= nil and type(filter[1]) ~= "boolean" then
-        table.insert(filter, 1, false)
-    end
-
-    indentation = indentation or "\t"
-    level = level or 0
-
-    local newline = minify and "" or "\n"
-    local result = ""
-    for k, v in pairs(tbl) do
-        if (type(v) == "table") then
-            if next(v) ~= nil or next(v) == nil then -- only recurse if table is not empty
-                local deeper = recurse_table_to_JSON(v, filter, indentation, minify, level + 1)
-                if deeper ~= "" or next(filter) == nil then -- suppress empty table titles if filtering is used
-                    result = result .. string.rep(indentation, level) .. k .. ": " .. newline ..
-                                 deeper
-                end
-            end
-        else
-            if next(filter) == nil or contains({table.unpack(filter, 2, #filter)}, k, filter[1]) then
-                if minify then
-                    k = "\"" .. k .. "\":"
-                else
-                    k = ""
-                end
-                result = result .. string.rep(indentation, level) .. k .. tostring(v) .. newline
-            end
-        end
-    end
-    return "{devices: [" .. newline .. result .. "]" .. newline .. "}"
-end
--- Shorthand for recurse_table_to_json_string().
-local function rt(tbl, filter, indentation, minify)
-    return recurse_table_to_JSON(tbl, filter, indentation, minify)
-end
-
--- local function get_arguments()
---     local args = {}
---     args.output_filename = stdnse.get_script_args({"nscan.filename"})
---     args.interface = stdnse.get_script_args({"nscan.interface"})
---     args.scan_type = stdnse.get_script_args({"nscan.type"})
---     return args
--- end
 
 local arguments_map = {
     output_filename = stdnse.get_script_args({"nscan.filename"}),
@@ -130,7 +64,50 @@ local function add_targets(ip, mask)
     return success
 end
 
+local file_mode = {read = "r", append = "a", write = "w"}
+
+local function write_json_to(filename, mode, json_str)
+    local file = io.open(filename, file_mode.append)
+    file:write(json_str)
+    file:close()
+end
+
+do -- State monitoring
+    local state_filepath = "/tmp/nscan.state"
+    local state_file
+
+    function Open_state()
+        state_file = io.open(state_filepath, file_mode.read)
+
+        -- Check if state file exists
+        if state_file then
+            -- State file exists, check if locked
+            if not state_file:read() then
+                -- State file is locked - another instance already running, exit
+                state_file:close()
+                os.exit(1)
+            else
+                -- State file is locked - previous instance crashed, clean up
+                Close_state()
+            end
+        end
+
+        -- Lock state file by writing current date and time.
+        state_file = io.open(state_filepath, file_mode.write)
+        state_file:write(os.date())
+    end
+
+    function Close_state()
+        -- Close state file if opened
+        if state_file then state_file:close() end
+        -- Delete state file
+        os.remove(state_filepath)
+    end
+
+end
+
 prerule = function()
+    Open_state()
     package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
     local ubus = require "ubus_5_3"
     local conn = ubus.connect()
@@ -141,7 +118,7 @@ prerule = function()
     conn:close()
 
     if arguments_map.interface == "--list" then
-        print(rt(interfaces_with_IPs))
+        print(json.generate(interfaces_with_IPs))
     else
         add_targets(interfaces_with_IPs[arguments_map.interface].address,
                     interfaces_with_IPs[arguments_map.interface].mask)
@@ -154,14 +131,15 @@ hostrule = function(host) return host.interface == arguments_map.interface end
 
 postrule = function()
     -- Finish writing to file, report state as finished
+    Close_state()
 end
 
 action = function(host, port)
-    print(rt(host))
     local ip_addr = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, ".")
     local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
                                    string.byte(host.mac_addr, 1, #host.mac_addr))
 
+    print(json.generate({IP = ip_addr, MAC = mac_addr, Vendor = get_manufacturer(mac_addr)}))
     print("IP: " .. ip_addr, "MAC: " .. mac_addr, "Vendor: " .. get_manufacturer(mac_addr))
     print("-----------------------------------------------------------------------------")
     -- return "IP: " .. ip_addr .. "\tMAC: " .. mac_addr
