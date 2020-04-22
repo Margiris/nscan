@@ -64,50 +64,80 @@ local function add_targets(ip, mask)
     return success
 end
 
-local file_mode = {read = "r", append = "a", write = "w"}
+local path = "/tmp/nscan/"
+local files = {state = path .. "nscan.state", interfaces = path .. "nscan_interfaces.json"}
+local file_mode = {append = "a+", read = "r", write = "w+"}
 
-local function write_json_to(filename, mode, json_str)
-    local file = io.open(filename, file_mode.append)
-    file:write(json_str)
+local function write_to(filename, a_string, mode)
+    mode = mode or file_mode.write
+    local file = io.open(filename, mode)
+    file:write(a_string)
     file:close()
 end
 
 do -- State monitoring
-    local state_filepath = "/tmp/nscan.state"
     local state_file
 
-    function Open_state()
-        state_file = io.open(state_filepath, file_mode.read)
+    local function get_line_from_state(line)
+        state_file:seek("set")
+        for _ = 1, line - 1 do state_file:read() end
+        return state_file:read()
+    end
 
-        -- Check if state file exists
-        if state_file then
-            -- State file exists, check if locked
-            if not state_file:read() then
-                -- State file is locked - another instance already running, exit
+    local function get_datetime_from_state()
+        return os.date("!%Y-%m-%d_%H:%M:%S", get_line_from_state(1))
+    end
+
+    function Open_state(stage)
+        state_file = io.open(files.state, file_mode.read)
+
+        if stage == "startup" then
+            -- Check if state file exists
+            if state_file then
+                -- State file exists, check if either locked or timed out
+                local run_datetime = get_line_from_state(1)
+                if not run_datetime or os.time() - run_datetime < 60 then
+                    -- State file is locked or not timed out - another instance already running, exit
+                    state_file:close()
+                    os.exit(1)
+                else
+                    -- State file is not locked - previous instance crashed, clean up
+                    Close_state("cleanup")
+                end
+            end
+            -- Lock state file by writing a timestamp.
+            state_file = io.open(files.state, file_mode.write)
+            state_file:write(os.time())
+        elseif stage == "action" then
+            -- Copied line from below because this block returns
+            files["results"] = path .. get_datetime_from_state() .. ".json"
+
+            -- If second line doesn't exist reopen for writing, create it and return true
+            if not get_line_from_state(2) then
                 state_file:close()
-                os.exit(1)
+                write_to(files.state, "\n0", file_mode.append)
+                state_file = io.open(files.state, file_mode.read)
+                return true
             else
-                -- State file is locked - previous instance crashed, clean up
-                Close_state()
+                return false
             end
         end
 
-        -- Lock state file by writing current date and time.
-        state_file = io.open(state_filepath, file_mode.write)
-        state_file:write(os.date())
+        -- Add results filename now because we didn't have the time written for reading earlier.
+        files["results"] = path .. get_datetime_from_state() .. ".json"
     end
 
-    function Close_state()
+    function Close_state(stage)
         -- Close state file if opened
         if state_file then state_file:close() end
         -- Delete state file
-        os.remove(state_filepath)
+        if stage == "cleanup" then os.remove(files.state) end
     end
 
 end
 
 prerule = function()
-    Open_state()
+    Open_state("startup")
     package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
     local ubus = require "ubus_5_3"
     local conn = ubus.connect()
@@ -119,30 +149,37 @@ prerule = function()
 
     if arguments_map.interface == "--list" then
         print(json.generate(interfaces_with_IPs))
+        write_to(files.interfaces, json.generate(interfaces_with_IPs) .. "\n")
     else
         add_targets(interfaces_with_IPs[arguments_map.interface].address,
                     interfaces_with_IPs[arguments_map.interface].mask)
+        write_to(files.results, "[")
     end
 
+    Close_state("prerule")
     return false
 end
 
 hostrule = function(host) return host.interface == arguments_map.interface end
 
+-- Finish writing to file, delete state file
 postrule = function()
-    -- Finish writing to file, report state as finished
-    Close_state()
+    Open_state("cleanup")
+    write_to(files.results, "]\n", file_mode.append)
+    Close_state("cleanup")
 end
 
 action = function(host, port)
-    local ip_addr = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, ".")
+    local first = Open_state("action")
     local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
                                    string.byte(host.mac_addr, 1, #host.mac_addr))
-
-    print(json.generate({IP = ip_addr, MAC = mac_addr, Vendor = get_manufacturer(mac_addr)}))
-    print("IP: " .. ip_addr, "MAC: " .. mac_addr, "Vendor: " .. get_manufacturer(mac_addr))
-    print("-----------------------------------------------------------------------------")
-    -- return "IP: " .. ip_addr .. "\tMAC: " .. mac_addr
+    local res = json.generate({
+        IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
+        MAC = mac_addr,
+        Vendor = get_manufacturer(mac_addr)
+    })
+    write_to(files.results, (first and "" or "\n,") .. res, file_mode.append)
+    Close_state("action")
     return 0
 end
 
