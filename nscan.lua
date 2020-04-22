@@ -165,7 +165,9 @@ hostrule = function(host) return host.interface == arguments_map.interface end
 -- Finish writing to file, delete state file
 postrule = function()
     Open_state("cleanup")
-    write_to(files.results, "]\n", file_mode.append)
+    if arguments_map.interface ~= "--list" then
+        write_to(files.results, "]\n", file_mode.append)
+    end
     Close_state("cleanup")
 end
 
