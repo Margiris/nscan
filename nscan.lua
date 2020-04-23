@@ -12,15 +12,34 @@ local arguments_map = {
     scan_type = stdnse.get_script_args({"nscan.type"})
 }
 
+local function get_wireless_APs(ubus_connection)
+    local wireless_APs = {}
+    -- ifname might be at radioX.interfaces.X.config.ifname
+    for _, v in pairs(ubus_connection:call("network.wireless", "status", {})) do
+        for _, interface in pairs(v.interfaces) do
+            if interface.ifname then
+                wireless_APs[interface.ifname] = interface.config.network
+            elseif interface.config.ifname then
+                wireless_APs[interface.config.ifname] = interface.config.network
+            end
+        end
+    end
+    return wireless_APs
+end
+
 local function get_interfaces_with_IPs(ubus_connection)
     local interfaces_with_IPs = {}
     for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
         if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
-            for _, a in pairs(v["ipv4-address"]) do
-                interfaces_with_IPs[v.l3_device] = a
+            for _, addr in pairs(v["ipv4-address"]) do
+                addr["device"] = v.l3_device
+                interfaces_with_IPs[v.interface] = addr
             end
         end
     end
+    print()
+    print(json.generate(get_wireless_APs(ubus_connection)))
+    print()
     return interfaces_with_IPs
 end
 
