@@ -16,7 +16,9 @@ local function get_interfaces_with_IPs(ubus_connection)
     local interfaces_with_IPs = {}
     for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
         if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
-            for _, a in pairs(v["ipv4-address"]) do interfaces_with_IPs[v.device] = a end
+            for _, a in pairs(v["ipv4-address"]) do
+                interfaces_with_IPs[v.l3_device] = a
+            end
         end
     end
     return interfaces_with_IPs
