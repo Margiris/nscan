@@ -1,4 +1,3 @@
--- local nmap = require "nmap"
 local stdnse = require "stdnse"
 local json = require "json"
 
@@ -89,6 +88,117 @@ do -- State monitoring
         if stage == "cleanup" then os.remove(files.state) end
     end
 
+end
+
+do --[[------------------------ IP functions ----------------------------
+    3 supported data types for IPs:
+        - string, e.g. "192.168.1.1"
+        - table with each value representing one bit in the IP address. Indexing starts from the leftmost digit. E.g. {1 1 0 0 0 0 0 0 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1}.
+        - number representing IP in binary form converted to base 10, e.g. 3232235777
+    All conversion functions assume correct argument type. All other functions do conversion automatically.
+    All functions assume correct value of each passed argument type.
+]]
+
+    -- conversion functions
+    local function IPv4_str2table(ip_str)
+
+        local ip_bin = {}
+        local octet_index = 0
+
+        ip_str:gsub("%d+", function(octet)
+            for i = 8, 1, -1 do
+                ip_bin[i + octet_index * 8] = math.floor(octet % 2)
+                octet = octet // 2
+            end
+
+            octet_index = octet_index + 1
+        end)
+
+        return ip_bin
+    end
+
+    local function table2IPv4_str(ip_bin)
+        local octets = {}
+        for o = 1, 4 do
+            local octet = 0
+            for i = 1, 8 do octet = octet * 2 + ip_bin[i + (o - 1) * 8] end
+            octets[o] = octet
+        end
+
+        return table.concat(octets, ".")
+    end
+
+    local function IPv4_str2int(ip_str)
+        local ip_dec = 0
+        local octet_index = 3
+
+        ip_str:gsub("%d+", function(octet)
+            ip_dec = ip_dec + octet * 256 ^ octet_index
+            octet_index = octet_index - 1
+        end)
+
+        return math.floor(ip_dec)
+    end
+
+    local function int2IPv4_str(ip_dec)
+        local octets = {}
+        for i = 4, 1, -1 do
+            octets[i] = ip_dec % 256
+            ip_dec = (ip_dec - octets[i]) // 256
+        end
+
+        return table.concat(octets, ".")
+    end
+
+    local n = {
+        number = function(ip) return ip end,
+        string = function(ip) return IPv4_str2int(ip) end,
+        table = function(ip) return IPv4_str2int(table2IPv4_str(ip)) end
+    }
+    local s = {
+        number = function(ip) return int2IPv4_str(ip) end,
+        string = function(ip) return ip end,
+        table = function(ip) return table2IPv4_str(ip) end
+    }
+    local t = {
+        number = function(ip) return IPv4_str2table(int2IPv4_str(ip)) end,
+        string = function(ip) return IPv4_str2table(ip) end,
+        table = function(ip) return ip end
+    }
+    local conv = {
+        number = function(ip) return n[type(ip)](ip) end,
+        string = function(ip) return s[type(ip)](ip) end,
+        table = function(ip) return t[type(ip)](ip) end
+    }
+
+    function convert_to(type, ip) return conv[type](ip) end
+
+    --[[
+        Find max or min subnet IP from given IP and mask.
+        ip_in_subnet - 
+        mask - 
+        min_max - 0 if min, 1 if max
+    ]]
+    function Find_subnet_min_max(ip_in, mask, min_max)
+        local ip_in_subnet = convert_to("table", ip_in)
+
+        local ip = {}
+        for i = 1, mask do ip[i] = ip_in_subnet[i] end
+        for i = mask + 1, 31 do ip[i] = min_max end
+        if mask < 32 then ip[32] = 1 - min_max end
+        return ip
+    end
+
+    function IPv4_iter(ip_in, mask)
+        local ip = convert_to("number", Find_subnet_min_max(ip_in, mask, 0)) - 1
+        local count = 2 ^ (32 - mask) - 1
+        -- local max = find_subnet_min_max(ip, mask, 1)
+        return function()
+            ip = ip + 1
+            count = count - 1
+            if count > 0 then return convert_to("string", ip) end
+        end
+    end
 end
 
 local function get_manufacturer(mac_str)
@@ -291,137 +401,3 @@ action = function(host, _)
     Close_state("action")
     return 0
 end
-
---[[------------------------ IP functions ----------------------------
-    3 supported data types for IPs:
-        - string, e.g. "192.168.1.1"
-        - table with each value representing one bit in the IP address. Indexing starts from the leftmost digit. E.g. {1 1 0 0 0 0 0 0 1 0 1 0 1 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 1}.
-        - number representing IP in binary form converted to base 10, e.g. 3232235777
-    All conversion functions assume correct argument type. All other functions do conversion automatically.
-    All functions assume correct value of each passed argument type.
-]]
-
-do -- conversion functions
-    local function IPv4_str2table(ip_str)
-
-        local ip_bin = {}
-        local octet_index = 0
-
-        ip_str:gsub("%d+", function(octet)
-            for i = 8, 1, -1 do
-                ip_bin[i + octet_index * 8] = math.floor(octet % 2)
-                octet = octet // 2
-            end
-
-            octet_index = octet_index + 1
-        end)
-
-        return ip_bin
-    end
-
-    local function table2IPv4_str(ip_bin)
-        local octets = {}
-        for o = 1, 4 do
-            local octet = 0
-            for i = 1, 8 do octet = octet * 2 + ip_bin[i + (o - 1) * 8] end
-            octets[o] = octet
-        end
-
-        return table.concat(octets, ".")
-    end
-
-    local function IPv4_str2int(ip_str)
-        local ip_dec = 0
-        local octet_index = 3
-
-        ip_str:gsub("%d+", function(octet)
-            ip_dec = ip_dec + octet * 256 ^ octet_index
-            octet_index = octet_index - 1
-        end)
-
-        return math.floor(ip_dec)
-    end
-
-    local function int2IPv4_str(ip_dec)
-        local octets = {}
-        for i = 4, 1, -1 do
-            octets[i] = ip_dec % 256
-            ip_dec = (ip_dec - octets[i]) // 256
-        end
-
-        return table.concat(octets, ".")
-    end
-
-    local n = {
-        number = function(ip) return ip end,
-        string = function(ip) return IPv4_str2int(ip) end,
-        table = function(ip) return IPv4_str2int(table2IPv4_str(ip)) end
-    }
-    local s = {
-        number = function(ip) return int2IPv4_str(ip) end,
-        string = function(ip) return ip end,
-        table = function(ip) return table2IPv4_str(ip) end
-    }
-    local t = {
-        number = function(ip) return IPv4_str2table(int2IPv4_str(ip)) end,
-        string = function(ip) return IPv4_str2table(ip) end,
-        table = function(ip) return ip end
-    }
-    local conv = {
-        number = function(ip) return n[type(ip)](ip) end,
-        string = function(ip) return s[type(ip)](ip) end,
-        table = function(ip) return t[type(ip)](ip) end
-    }
-
-    function convert_to(type, ip) return conv[type](ip) end
-end
-
---[[
-        Find max or min subnet IP from given IP and mask.
-        ip_in_subnet - 
-        mask - 
-        min_max - 0 if min, 1 if max
-    ]]
-function Find_subnet_min_max(ip_in, mask, min_max)
-    local ip_in_subnet = convert_to("table", ip_in)
-
-    local ip = {}
-    for i = 1, mask do ip[i] = ip_in_subnet[i] end
-    for i = mask + 1, 31 do ip[i] = min_max end
-    if mask < 32 then ip[32] = 1 - min_max end
-    return ip
-end
-
-function IPv4_iter(ip_in, mask)
-    local ip = convert_to("number", Find_subnet_min_max(ip_in, mask, 0)) - 1
-    local count = 2 ^ (32 - mask) - 1
-    -- local max = find_subnet_min_max(ip, mask, 1)
-    return function()
-        ip = ip + 1
-        count = count - 1
-        if count > 0 then return convert_to("string", ip) end
-    end
-end
-
-function Test()
-    local mask = 28
-    local ip_str = "22.95.227.62"
-    local ip = convert_to("table", ip_str)
-    local ip2 = convert_to("number", ip_str)
-
-    local a, b, c = {}, {}, {}
-
-    for ip_s in IPv4_iter(ip_str, mask) do table.insert(a, ip_s) end
-    for ip_t in IPv4_iter(ip, mask) do table.insert(b, ip_t) end
-    for ip_n in IPv4_iter(ip2, mask) do table.insert(c, ip_n) end
-
-    print()
-    print(convert_to("string", Find_subnet_min_max(ip_str, mask, 0)))
-    for i = 1, #a do print(a[i], b[i], c[i]) end
-    print(convert_to("string", Find_subnet_min_max(ip_str, mask, 1)))
-    print()
-    print(#a)
-    print()
-
-end
-----------------------------------------------------------------------
