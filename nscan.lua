@@ -6,41 +6,88 @@ description = "Takes arguments from console"
 categories = {"discovery"}
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
-local arguments_map = {
+local args_map = {
     output_filename = stdnse.get_script_args({"nscan.filename"}),
-    interface = stdnse.get_script_args({"nscan.interface"}),
-    scan_type = stdnse.get_script_args({"nscan.type"})
+    interface = stdnse.get_script_args({"nscan.device"}),
+    scan_type = stdnse.get_script_args({"nscan.type"}),
+    wireless = nil,
+    first = nil
 }
 
-local function get_wireless_APs(ubus_connection)
-    local wireless_APs = {}
-    -- ifname might be at radioX.interfaces.X.config.ifname
-    for _, v in pairs(ubus_connection:call("network.wireless", "status", {})) do
-        for _, interface in pairs(v.interfaces) do
-            if interface.ifname then
-                wireless_APs[interface.ifname] = interface.config.network
-            elseif interface.config.ifname then
-                wireless_APs[interface.config.ifname] = interface.config.network
-            end
-        end
-    end
-    return wireless_APs
+local path = "/tmp/nscan/"
+local files = {
+    state = path .. "nscan.state",
+    interfaces = path .. "nscan_interfaces.json",
+    results = args_map.output_filename and path .. args_map.output_filename
+}
+local file_mode = {append = "a+", read = "r", write = "w+"}
+
+local function write_to(filename, a_string, mode)
+    mode = mode or file_mode.write
+    local file = io.open(filename, mode)
+    file:write(a_string)
+    file:close()
 end
 
-local function get_interfaces_with_IPs(ubus_connection)
-    local interfaces_with_IPs = {}
-    for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
-        if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
-            for _, addr in pairs(v["ipv4-address"]) do
-                addr["device"] = v.l3_device
-                interfaces_with_IPs[v.interface] = addr
+do -- State monitoring
+    local state_file
+
+    local function get_line_from_state(line)
+        state_file:seek("set")
+        for _ = 1, line - 1 do state_file:read() end
+        return state_file:read()
+    end
+
+    function Open_state(stage, is_wireless)
+        is_wireless = is_wireless or false
+        state_file = io.open(files.state, file_mode.read)
+
+        if stage == "startup" then
+            -- Check if state file exists
+            if state_file then
+                -- State file exists, check if either locked or timed out
+                local run_datetime = get_line_from_state(1)
+                if not run_datetime or os.time() - run_datetime < 60 then
+                    -- State file is locked or not timed out - another instance already running, exit
+                    state_file:close()
+                    os.exit(1)
+                else
+                    -- State file is not locked - previous instance crashed, clean up
+                    Close_state("cleanup")
+                end
+            end
+            -- Lock state file by writing a timestamp.
+            state_file = io.open(files.state, file_mode.write)
+            state_file:write(os.time() .. "\n" .. tostring(is_wireless))
+        elseif stage == "action" then
+            -- If third line doesn't exist reopen for writing, create it and set first to true
+            if not get_line_from_state(3) then
+                state_file:close()
+                write_to(files.state, "\n0", file_mode.append)
+                state_file = io.open(files.state, file_mode.read)
+                args_map.first = true
+            else
+                args_map.first = false
             end
         end
+
+        args_map.wireless = get_line_from_state(2) == "true"
+
+        -- Add results filename if it's not specified in arguments.
+        -- We do this now because earlier we didn't have the time written for reading.
+        if not files.results then
+            files.results = path .. os.date("!%Y-%m-%d_%H:%M:%S", get_line_from_state(1)) ..
+                                ".json"
+        end
     end
-    print()
-    print(json.generate(get_wireless_APs(ubus_connection)))
-    print()
-    return interfaces_with_IPs
+
+    function Close_state(stage)
+        -- Close state file if opened
+        if state_file then state_file:close() end
+        -- Delete state file
+        if stage == "cleanup" then os.remove(files.state) end
+    end
+
 end
 
 local function get_manufacturer(mac_str)
@@ -52,6 +99,72 @@ local function get_manufacturer(mac_str)
     local mac_prefixes = try(datafiles.parse_mac_prefixes())
     local prefix = string.upper(string.sub(mac_str:gsub(':', ''), 1, 6))
     return mac_prefixes[prefix] or "Unknown"
+end
+
+local function get_interfaces_with_IPs(ubus_connection)
+    local interfaces_with_IPs = {}
+    for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
+        if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
+            for _, addr in pairs(v["ipv4-address"]) do
+                addr["interface"] = v.interface
+                interfaces_with_IPs[v.l3_device] = addr
+            end
+        end
+    end
+
+    local wireless_APs = {}
+    -- ifname might be at radioX.interfaces.X.config.ifname or radioX.interfaces.X.config.wifi_id
+    for _, v in pairs(ubus_connection:call("network.wireless", "status", {})) do
+        for _, interface in pairs(v.interfaces) do
+            if interface.ifname then
+                wireless_APs[interface.ifname] = interface.config.network
+            elseif interface.config.ifname then
+                wireless_APs[interface.config.ifname] = interface.config.network
+                -- elseif interface.config.wifi_id then
+                --     wireless_APs[interface.config.wifi_id] = interface.config.network
+            end
+        end
+    end
+    return {wired = interfaces_with_IPs, wireless = wireless_APs}
+end
+
+local function get_interfaces_used_by_wireless(wireless_ap, ubus_connection)
+    local interfaces_with_IPs = get_interfaces_with_IPs(ubus_connection)
+
+    local devices = {}
+
+    for _, wireless_interface in pairs(interfaces_with_IPs.wireless[wireless_ap]) do
+        for dev, v in pairs(interfaces_with_IPs.wired) do
+            if v.interface == wireless_interface then
+                devices[dev] = interfaces_with_IPs.wired[dev]
+            end
+        end
+    end
+
+    return devices
+end
+
+local function get_wireless_on_interface(interface, ubus_connection)
+    local interfaces_with_IPs = get_interfaces_with_IPs(ubus_connection)
+
+    local wireless = {}
+
+    for wireless_name, wireless_interfaces in pairs(interfaces_with_IPs.wireless) do
+        if wireless_interfaces[interfaces_with_IPs.wired[interface].interface] then
+            wireless[wireless_name] = wireless_interfaces
+        end
+    end
+
+    return wireless
+end
+
+local function get_wireless_clients_MACs(wireless_ap, ubus_connection)
+    local MACs = {}
+    for mac, details in pairs(
+                            ubus_connection:call("hostapd." .. wireless_ap, "get_clients", {}).clients) do
+        if details.authorized or details.preauth then table.insert(MACs, mac) end
+    end
+    return MACs
 end
 
 local function add_targets(ip, mask)
@@ -85,123 +198,89 @@ local function add_targets(ip, mask)
     return success
 end
 
-local path = "/tmp/nscan/"
-local files = {state = path .. "nscan.state", interfaces = path .. "nscan_interfaces.json"}
-local file_mode = {append = "a+", read = "r", write = "w+"}
-
-local function write_to(filename, a_string, mode)
-    mode = mode or file_mode.write
-    local file = io.open(filename, mode)
-    file:write(a_string)
-    file:close()
-end
-
-do -- State monitoring
-    local state_file
-
-    local function get_line_from_state(line)
-        state_file:seek("set")
-        for _ = 1, line - 1 do state_file:read() end
-        return state_file:read()
-    end
-
-    local function get_datetime_from_state()
-        return os.date("!%Y-%m-%d_%H:%M:%S", get_line_from_state(1))
-    end
-
-    function Open_state(stage)
-        state_file = io.open(files.state, file_mode.read)
-
-        if stage == "startup" then
-            -- Check if state file exists
-            if state_file then
-                -- State file exists, check if either locked or timed out
-                local run_datetime = get_line_from_state(1)
-                if not run_datetime or os.time() - run_datetime < 60 then
-                    -- State file is locked or not timed out - another instance already running, exit
-                    state_file:close()
-                    os.exit(1)
-                else
-                    -- State file is not locked - previous instance crashed, clean up
-                    Close_state("cleanup")
-                end
-            end
-            -- Lock state file by writing a timestamp.
-            state_file = io.open(files.state, file_mode.write)
-            state_file:write(os.time())
-        elseif stage == "action" then
-            -- Copied line from below because this block returns
-            files["results"] = path .. get_datetime_from_state() .. ".json"
-
-            -- If second line doesn't exist reopen for writing, create it and return true
-            if not get_line_from_state(2) then
-                state_file:close()
-                write_to(files.state, "\n0", file_mode.append)
-                state_file = io.open(files.state, file_mode.read)
-                return true
-            else
-                return false
-            end
-        end
-
-        -- Add results filename now because we didn't have the time written for reading earlier.
-        files["results"] = path .. get_datetime_from_state() .. ".json"
-    end
-
-    function Close_state(stage)
-        -- Close state file if opened
-        if state_file then state_file:close() end
-        -- Delete state file
-        if stage == "cleanup" then os.remove(files.state) end
-    end
-
-end
-
 prerule = function()
-    Open_state("startup")
     package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
     local ubus = require "ubus_5_3"
     local conn = ubus.connect()
     if not conn then error("Failed to connect to ubusd") end
 
     local interfaces_with_IPs = get_interfaces_with_IPs(conn)
+    Open_state("startup", interfaces_with_IPs.wireless[args_map.interface] and true or false)
 
-    conn:close()
-
-    if arguments_map.interface == "--list" then
+    if args_map.interface == "--list" then
         print(json.generate(interfaces_with_IPs))
         write_to(files.interfaces, json.generate(interfaces_with_IPs) .. "\n")
     else
-        add_targets(interfaces_with_IPs[arguments_map.interface].address,
-                    interfaces_with_IPs[arguments_map.interface].mask)
+        if args_map.wireless then
+            for _, device in pairs(get_interfaces_used_by_wireless(args_map.interface, conn)) do
+                add_targets(device.address, device.mask)
+            end
+        else
+            add_targets(interfaces_with_IPs.wired[args_map.interface].address,
+                        interfaces_with_IPs.wired[args_map.interface].mask)
+        end
+
         write_to(files.results, "[")
     end
 
-    Close_state("prerule")
+    conn:close()
+    Close_state("startup")
     return false
 end
 
-hostrule = function(host) return host.interface == arguments_map.interface end
+hostrule = function(host)
+    Open_state("filter")
+    local mac_addr = host.mac_addr and
+                         string.format('%02X:%02X:%02X:%02X:%02X:%02X',
+                                       string.byte(host.mac_addr, 1, #host.mac_addr)) or ""
+
+    package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
+    local ubus = require "ubus_5_3"
+    local conn = ubus.connect()
+    if not conn then error("Failed to connect to ubusd") end
+
+    local dev_on_wireless = false
+
+    print(args_map.wireless)
+    if args_map.wireless then
+        for _, mac in pairs(get_wireless_clients_MACs(args_map.interface, conn)) do
+            if mac == mac_addr then dev_on_wireless = true end
+        end
+        conn:close()
+        Close_state("filter")
+        return dev_on_wireless and
+                   get_interfaces_used_by_wireless(args_map.interface, conn)[host.interface]
+    else
+        for wireless, _ in pairs(get_wireless_on_interface(args_map.interface, conn)) do
+            for _, mac in pairs(get_wireless_clients_MACs(wireless, conn)) do
+                if mac == mac_addr then dev_on_wireless = true end
+            end
+        end
+        conn:close()
+        Close_state("filter")
+        return not dev_on_wireless and host.interface == args_map.interface
+    end
+end
 
 -- Finish writing to file, delete state file
 postrule = function()
     Open_state("cleanup")
-    if arguments_map.interface ~= "--list" then
-        write_to(files.results, "]\n", file_mode.append)
-    end
+    if args_map.interface ~= "--list" then write_to(files.results, "]\n", file_mode.append) end
     Close_state("cleanup")
 end
 
 action = function(host, port)
-    local first = Open_state("action")
+    Open_state("action")
     local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
                                    string.byte(host.mac_addr, 1, #host.mac_addr))
+
     local res = json.generate({
         IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
         MAC = mac_addr,
         Vendor = get_manufacturer(mac_addr)
     })
-    write_to(files.results, (first and "" or "\n,") .. res, file_mode.append)
+    print(files.results)
+    write_to(files.results, (args_map.first and "" or "\n,") .. res, file_mode.append)
     Close_state("action")
     return 0
 end
