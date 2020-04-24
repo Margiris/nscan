@@ -10,6 +10,7 @@ local args_map = {
     output_filename = stdnse.get_script_args({"nscan.filename"}),
     interface = stdnse.get_script_args({"nscan.device"}),
     scan_type = stdnse.get_script_args({"nscan.type"}),
+    verbose = stdnse.get_script_args({"nscan.v"}) == "true" and true or false,
     wireless = nil,
     first = nil
 }
@@ -162,32 +163,30 @@ local function get_wireless_clients_MACs(wireless_ap, ubus_connection)
     local MACs = {}
     for mac, details in pairs(
                             ubus_connection:call("hostapd." .. wireless_ap, "get_clients", {}).clients) do
-        if details.authorized or details.preauth then table.insert(MACs, mac) end
+        if details.authorized or details.preauth then table.insert(MACs, mac:upper()) end
     end
     return MACs
 end
 
 local function add_targets(ip, mask)
+    if args_map.verbose then
+        print("From " .. convert_to("string", Find_subnet_min_max(ip, mask, 0)) .. " to " ..
+                  convert_to("string", Find_subnet_min_max(ip, mask, 1)))
+    end
+
     local target = require "target"
-
-    local success = true
-    local targets = {}
-
-    for ip_s in IPv4_iter(ip, mask) do table.insert(targets, ip_s) end
-
-    print(convert_to("string", Find_subnet_min_max(ip, mask, 0)))
-    print(convert_to("string", Find_subnet_min_max(ip, mask, 1)))
-    print()
 
     -- temporarily enable adding new targets irrespective of script arguments and save old value for restoring later
     local old_ALLOW_NEW_TARGETS = target.ALLOW_NEW_TARGETS
     target.ALLOW_NEW_TARGETS = true
 
-    for _, item in pairs(targets) do
-        local st, err = target.add(item)
+    local success = true
+
+    for ip_str in IPv4_iter(ip, mask) do
+        local st, err = target.add(ip_str)
 
         if not st then
-            print("\n\nCouldn't add target " .. item .. ": " .. err .. "\n\n")
+            print("\n\nCouldn't add target " .. ip_str .. ": " .. err .. "\n\n")
             success = false
         end
     end
@@ -199,6 +198,7 @@ local function add_targets(ip, mask)
 end
 
 prerule = function()
+    if args_map.verbose then print("\nprerule") end
     package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
     local ubus = require "ubus_5_3"
     local conn = ubus.connect()
@@ -207,8 +207,11 @@ prerule = function()
     local interfaces_with_IPs = get_interfaces_with_IPs(conn)
     Open_state("startup", interfaces_with_IPs.wireless[args_map.interface] and true or false)
 
+    if args_map.verbose then
+        print("Scanning " .. (args_map.wireless and "wireless" or "ethernet"))
+    end
     if args_map.interface == "--list" then
-        print(json.generate(interfaces_with_IPs))
+        if args_map.verbose then print(json.generate(interfaces_with_IPs)) end
         write_to(files.interfaces, json.generate(interfaces_with_IPs) .. "\n")
     else
         if args_map.wireless then
@@ -229,6 +232,7 @@ prerule = function()
 end
 
 hostrule = function(host)
+    if args_map.verbose then print("\nhostrule") end
     Open_state("filter")
     local mac_addr = host.mac_addr and
                          string.format('%02X:%02X:%02X:%02X:%02X:%02X',
@@ -240,46 +244,49 @@ hostrule = function(host)
     if not conn then error("Failed to connect to ubusd") end
 
     local dev_on_wireless = false
+    local ret = false
 
-    print(args_map.wireless)
     if args_map.wireless then
         for _, mac in pairs(get_wireless_clients_MACs(args_map.interface, conn)) do
+            if args_map.verbose then print(mac, mac_addr, mac == mac_addr) end
             if mac == mac_addr then dev_on_wireless = true end
         end
-        conn:close()
-        Close_state("filter")
-        return dev_on_wireless and
-                   get_interfaces_used_by_wireless(args_map.interface, conn)[host.interface]
+        ret = dev_on_wireless and
+                  get_interfaces_used_by_wireless(args_map.interface, conn)[host.interface]
     else
         for wireless, _ in pairs(get_wireless_on_interface(args_map.interface, conn)) do
             for _, mac in pairs(get_wireless_clients_MACs(wireless, conn)) do
                 if mac == mac_addr then dev_on_wireless = true end
             end
         end
-        conn:close()
-        Close_state("filter")
-        return not dev_on_wireless and host.interface == args_map.interface
+        ret = not dev_on_wireless and host.interface == args_map.interface
     end
+
+    conn:close()
+    Close_state("host")
+    return ret
 end
 
 -- Finish writing to file, delete state file
 postrule = function()
+    if args_map.verbose then print("\npostrule") end
     Open_state("cleanup")
     if args_map.interface ~= "--list" then write_to(files.results, "]\n", file_mode.append) end
     Close_state("cleanup")
 end
 
-action = function(host, port)
+action = function(host, _)
+    if args_map.verbose then print("\naction") end
     Open_state("action")
     local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
-                                   string.byte(host.mac_addr, 1, #host.mac_addr))
+                                   string.byte(host.mac_addr, 1, #host.mac_addr)):upper()
 
     local res = json.generate({
         IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
         MAC = mac_addr,
         Vendor = get_manufacturer(mac_addr)
     })
-    print(files.results)
+    if args_map.verbose then print("Writing to " .. files.results) end
     write_to(files.results, (args_map.first and "" or "\n,") .. res, file_mode.append)
     Close_state("action")
     return 0
