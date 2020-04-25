@@ -39,5 +39,5 @@ curl https://raw.githubusercontent.com/Margiris/nscan/master/nscan.sh >nscan.sh
 chmod +x ./nscan.sh
 mv ./nscan.sh /bin/nscan
 
-curl -O ubus_5_3.so https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so
+curl https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so >ubus_5_3.so
 mv ubus_5_3.so /usr/lib/lua/
