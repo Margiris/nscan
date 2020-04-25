@@ -48,6 +48,6 @@ echo "Installing..."
 mv ./nscan.lua /usr/share/nmap/scripts/nscan.nse
 chmod +x ./nscan.sh
 mv ./nscan.sh /bin/nscan
-mv ubus_5_3_$device.so /usr/lib/lua/ubus_5_3.so
+mv ubus/ubus_5_3_$device.so /usr/lib/lua/ubus_5_3.so
 
 echo "Installed."
