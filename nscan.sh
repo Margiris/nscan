@@ -2,6 +2,7 @@
 # POSIX
 
 # Reset all variables that might be set
+nscan_dir="/tmp/nscan"
 args_output=""
 args_verbose=0
 args_scan_type="mini"
@@ -10,7 +11,6 @@ nscan_type=
 nscan_filename=
 nscan_verbose=
 cat_command=
-nscan_script_args=
 
 # # When called, the process ends.
 # Args:
@@ -58,42 +58,31 @@ while :; do
         ;;
 
     -o | --output) # Takes an option argument, ensuring it has been specified.
-        if [ -n "$2" ]; then
-            args_output=$2
-            shift
-        else
-            printf 'ERROR: "--output" requires a non-empty option argument.\n' >&2
-            exit 1
-        fi
+        test -n "$2" && test "$(printf '%s' "$2" | cut -c1)" != - || _PRINT_HELP=yes die "ERROR: '$1' requires a non-empty option argument." 1
+        args_output=$2
+        shift
         ;;
     --output=?*)
         args_output=${1#*=} # Delete everything up to "=" and assign the remainder.
         ;;
     --output=) # Handle the case of an empty --output=
-        printf 'ERROR: "--output" requires a non-empty option argument.\n' >&2
-        exit 1
+        _PRINT_HELP=yes die "ERROR: '$1' requires a non-empty option argument." 1
         ;;
 
     -t | --scan-type) # Takes an option argument, ensuring it has been specified.
-        if [ -n "$2" ]; then
-            if [ "$2" = "full" ] || [ "$2" = "mini" ]; then
-                args_scan_type=$2
-            else
-                printf 'ERROR: Unknown "--scan-type" value: %s\n' "$2" >&2
-                exit 1
-            fi
-            shift
+        test -n "$2" && test "$(printf '%s' "$2" | cut -c1)" != - || _PRINT_HELP=yes die "ERROR: '$1' requires a non-empty option argument." 1
+        if [ "$2" = "full" ] || [ "$2" = "mini" ]; then
+            args_scan_type=$2
         else
-            printf 'ERROR: "--scan-type" requires a non-empty option argument.\n' >&2
-            exit 1
+            _PRINT_HELP=yes die "ERROR: Unknown '--scan-type' value: '$2'" 2
         fi
+        shift
         ;;
     --scan-type=?*)
         args_scan_type=${1#*=} # Delete everything up to "=" and assign the remainder.
         ;;
     --scan-type=) # Handle the case of an empty --scan-type=
-        printf 'ERROR: "--scan-type" requires a non-empty option argument.\n' >&2
-        exit 1
+        _PRINT_HELP=yes die "ERROR: '$1' requires a non-empty option argument." 1
         ;;
 
     --) # End of all options.
@@ -110,28 +99,22 @@ while :; do
     shift
 done
 
-# Turn on command printing and nmap's debug mode if verbose was specified two or more times.
-if [ $args_verbose -gt 1 ]; then
+# Turn on command printing if verbose was specified 3 or more times.
+if [ $args_verbose -gt 2 ]; then
     set -x
-    debug_flag="-d"
 fi
 
-mkdir /tmp/nscan >/dev/null 2>&1
+mkdir $nscan_dir >/dev/null 2>&1
 
 if [ "$args_interface" = "" ]; then
     args_interface=$1
-    if [ -z "$args_interface" ] || [ "$args_interface" = "" ]; then
-        printf 'ERROR: No interface specified. Did you mean "%s --list" ?\n' "$0" >&2
-        exit 1
-    fi
+    test -n "$args_interface" && test "$args_interface" != "" || die "ERROR: No interface specified. Did you mean '$0 --list' ?" 3
 fi
-if [ "$args_output" != "" ]; then
-    nscan_filename=", nscan.filename=$args_output"
-fi
+test "$args_output" != "" && nscan_filename=", nscan.filename=$args_output"
 if [ $args_verbose -gt 0 ]; then
-    if [ "$args_output" != "" ]; then
-        cat_command="&& cat /tmp/nscan/$args_output"
-    fi
+    test "$args_output" != "" && cat_command="&& cat $nscan_dir/$args_output"
+    # Turn on nmap's debug mode if verbose was specified 2 or more times.
+    test $args_verbose -gt 1 && debug_flag="-d"
     nscan_verbose=", nscan.v=true' $debug_flag"
 else
     nscan_verbose="'"
