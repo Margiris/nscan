@@ -36,10 +36,10 @@ files="nscan.lua nscan.sh ubus/ubus_5_3_$device.so"
 
 for file in $files; do
     echo "Downloading $file..."
-    test curl --fail https://raw.githubusercontent.com/Margiris/nscan/master/$file >$file || {
+    if ! curl --fail "https://raw.githubusercontent.com/Margiris/nscan/master/$file" >$file; then
         echo "Failed to download $file. Aborting."
         exit 3
-    }
+    fi
 done
 
 echo "Installing..."
