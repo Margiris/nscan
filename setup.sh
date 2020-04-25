@@ -26,7 +26,8 @@ if ! curl --output /dev/null --silent --head --fail "https://github.com/Margiris
     exit 1
 fi
 
-mkdir /tmp/nscan && cd /tmp/nscan || {
+mkdir /tmp/nscan
+cd /tmp/nscan || {
     echo "Failed to create temporary directory. Aborting." >&2
     exit 2
 }
