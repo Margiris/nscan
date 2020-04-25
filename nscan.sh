@@ -123,7 +123,7 @@ nscan_interface=", nscan.interface=$args_interface"
 nscan_type="nscan.type=$args_scan_type"
 
 if [ "$args_scan_type" = "full" ]; then
-    eval "nmap -n -O -PR --send-eth --script nscan.nse --script-args '$nscan_type $nscan_interface $nscan_filename $nscan_verbose $cat_command"
+    eval "nmap -n -O --osscan-guess -PR --send-eth --script nscan.nse --script-args '$nscan_type $nscan_interface $nscan_filename $nscan_verbose $cat_command"
 else
     eval "nmap -n -sn -PR --send-eth --script nscan.nse --script-args '$nscan_type $nscan_interface $nscan_filename $nscan_verbose $cat_command"
 fi
