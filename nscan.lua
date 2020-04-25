@@ -5,6 +5,81 @@ description = "Takes arguments from console"
 categories = {"discovery"}
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
+local function contains(tbl, value, full_match)
+    full_match = full_match or false
+    for _, v in pairs(tbl) do
+        if (full_match and v == value) or
+            (not full_match and string.find(value, v, 1, true)) then
+            return true
+        end
+    end
+    return false
+end
+
+--[[
+    @param table tbl: table to recurse.
+    [@param table filter: table to filter tbl with, containing:
+        [boolean: filter[1]: boolean if string must match fully. Default: false],
+        filter[2, ..]: strings to filter in (as opposed to filter out).
+    If empty, no filtering is done. Default: {}]
+    [@param string intentation: string to use as indentation to represent hierarchy in the table. Default: "\t"]
+    [prefix_key: boolean whether to prefix value with key. Default: true. Overriden by: one_line]
+    [one_line: boolean whether to print all values in one line. If true, overrides prefix_key to false. Default: true]
+--]]
+local function recurse_table_to_json_string(tbl, filter, indentation,
+                                            prefix_key, one_line, level)
+    if not tbl then return "\n*** Table is nil ***\n" end
+
+    filter = filter or {}
+    if next(filter) ~= nil and type(filter[1]) ~= "boolean" then
+        table.insert(filter, 1, false)
+    end
+
+    indentation = indentation or "\t"
+    level = level or 0
+
+    if prefix_key == nil then
+        prefix_key = true
+    elseif one_line then
+        prefix_key = false
+    end
+
+    local result = ""
+    local newline = one_line and "" or "\n"
+    for k, v in pairs(tbl) do
+        if (type(v) == "table") then
+            if next(v) ~= nil or next(v) == nil then -- only recurse if table is not empty
+                local deeper = recurse_table_to_json_string(v, filter,
+                                                            indentation,
+                                                            prefix_key,
+                                                            one_line, level + 1)
+                if deeper ~= "" or next(filter) == nil then -- suppress empty table titles if filtering is used
+                    result = result .. string.rep(indentation, level) .. k ..
+                                 ": " .. newline .. deeper
+                end
+            end
+        else
+            if next(filter) == nil or
+                contains({table.unpack(filter, 2, #filter)}, k, filter[1]) then
+                if prefix_key then
+                    k = k .. " = "
+                else
+                    k = ""
+                end
+                result = result .. string.rep(indentation, level) .. k ..
+                             tostring(v) .. newline
+            end
+        end
+    end
+    return result
+end
+
+-- Shorthand for recurse_table_to_json_string().
+local function rt(tbl, filter, indentation, prefix_key, level)
+    return recurse_table_to_json_string(tbl, filter, indentation, prefix_key,
+                                        level)
+end
+
 local args_map = {
     output_filename = stdnse.get_script_args({"nscan.filename"}),
     interface = stdnse.get_script_args({"nscan.interface"}),
@@ -23,6 +98,7 @@ local files = {
 local file_mode = {append = "a+", read = "r", write = "w+"}
 
 local function write_to(filename, a_string, mode)
+    if args_map.verbose then print("Writing to " .. filename) end
     mode = mode or file_mode.write
     local file = io.open(filename, mode)
     file:write(a_string)
@@ -76,8 +152,9 @@ do -- State monitoring
         -- Add results filename if it's not specified in arguments.
         -- We do this now because earlier we didn't have the time written for reading.
         if not files.results then
-            files.results = path .. os.date("!%Y-%m-%d_%H:%M:%S", get_line_from_state(1)) ..
-                                ".json"
+            files.results = path ..
+                                os.date("!%Y-%m-%d_%H:%M:%S",
+                                        get_line_from_state(1)) .. ".json"
         end
     end
 
@@ -121,7 +198,9 @@ do --[[------------------------ IP functions ----------------------------
         local octets = {}
         for o = 1, 4 do
             local octet = 0
-            for i = 1, 8 do octet = octet * 2 + ip_bin[i + (o - 1) * 8] end
+            for i = 1, 8 do
+                octet = octet * 2 + ip_bin[i + (o - 1) * 8]
+            end
             octets[o] = octet
         end
 
@@ -204,7 +283,8 @@ end
 --------------------------- ubus functions ---------------------------
 local function get_interfaces_with_IPs(ubus_connection)
     local interfaces_with_IPs = {}
-    for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
+    for _, v in pairs(
+                    ubus_connection:call("network.interface", "dump", {}).interface) do
         if v["ipv4-address"] ~= nil and next(v["ipv4-address"]) ~= nil then
             for _, addr in pairs(v["ipv4-address"]) do
                 addr["interface"] = v.interface
@@ -234,7 +314,8 @@ local function get_interfaces_used_by_wireless(wireless_ap, ubus_connection)
 
     local devices = {}
 
-    for _, wireless_interface in pairs(interfaces_with_IPs.wireless[wireless_ap]) do
+    for _, wireless_interface in
+        pairs(interfaces_with_IPs.wireless[wireless_ap]) do
         for dev, v in pairs(interfaces_with_IPs.wired) do
             if v.interface == wireless_interface then
                 devices[dev] = interfaces_with_IPs.wired[dev]
@@ -263,9 +344,11 @@ end
 
 local function get_wireless_clients_MACs(wireless_ap, ubus_connection)
     local MACs = {}
-    for mac, details in pairs(
-                            ubus_connection:call("hostapd." .. wireless_ap, "get_clients", {}).clients) do
-        if details.authorized or details.preauth then table.insert(MACs, mac:upper()) end
+    for mac, details in pairs(ubus_connection:call("hostapd." .. wireless_ap,
+                                                   "get_clients", {}).clients) do
+        if details.authorized or details.preauth then
+            table.insert(MACs, mac:upper())
+        end
     end
     return MACs
 end
@@ -284,8 +367,9 @@ end
 
 local function add_targets(ip, mask)
     if args_map.verbose then
-        print("From " .. convert_to("string", Find_subnet_min_max(ip, mask, 0)) .. " to " ..
-                  convert_to("string", Find_subnet_min_max(ip, mask, 1)))
+        print(
+            "From " .. convert_to("string", Find_subnet_min_max(ip, mask, 0)) ..
+                " to " .. convert_to("string", Find_subnet_min_max(ip, mask, 1)))
     end
 
     local target = require "target"
@@ -319,17 +403,21 @@ prerule = function()
     if not conn then error("Failed to connect to ubusd") end
 
     local interfaces_with_IPs = get_interfaces_with_IPs(conn)
-    Open_state("startup", interfaces_with_IPs.wireless[args_map.interface] and true or false)
+    Open_state("startup", interfaces_with_IPs.wireless[args_map.interface] and
+                   true or false)
 
     if args_map.verbose then
         print("Scanning " .. (args_map.wireless and "wireless" or "ethernet"))
     end
     if args_map.interface == "--list" then
-        if args_map.verbose then print(json.generate(interfaces_with_IPs)) end
+        if args_map.verbose then
+            print(json.generate(interfaces_with_IPs))
+        end
         write_to(files.interfaces, json.generate(interfaces_with_IPs) .. "\n")
     else
         if args_map.wireless then
-            for _, device in pairs(get_interfaces_used_by_wireless(args_map.interface, conn)) do
+            for _, device in pairs(get_interfaces_used_by_wireless(
+                                       args_map.interface, conn)) do
                 add_targets(device.address, device.mask)
             end
         else
@@ -350,7 +438,8 @@ hostrule = function(host)
     Open_state("filter")
     local mac_addr = host.mac_addr and
                          string.format('%02X:%02X:%02X:%02X:%02X:%02X',
-                                       string.byte(host.mac_addr, 1, #host.mac_addr)) or ""
+                                       string.byte(host.mac_addr, 1,
+                                                   #host.mac_addr)) or ""
 
     package.cpath = package.cpath .. ";/usr/lib/lua/?.so"
     local ubus = require "ubus_5_3"
@@ -362,16 +451,21 @@ hostrule = function(host)
 
     if args_map.wireless then
         for _, mac in pairs(get_wireless_clients_MACs(args_map.interface, conn)) do
-            if args_map.verbose then print(mac, mac_addr, mac == mac_addr) end
+            if args_map.verbose then
+                print(mac, mac_addr, mac == mac_addr)
+            end
             if mac == mac_addr then dev_on_wireless = true end
         end
         ret = dev_on_wireless and
                   get_interfaces_used_by_wireless(args_map.interface, conn)[host.interface]
     else
-        for wireless, _ in pairs(get_wireless_on_interface(args_map.interface, conn)) do
+        for wireless, _ in pairs(get_wireless_on_interface(args_map.interface,
+                                                           conn)) do
             if args_map.verbose then print(wireless) end
             for _, mac in pairs(get_wireless_clients_MACs(wireless, conn)) do
-                if args_map.verbose then print(mac, mac_addr, mac == mac_addr) end
+                if args_map.verbose then
+                    print(mac, mac_addr, mac == mac_addr)
+                end
                 if mac == mac_addr then dev_on_wireless = true end
             end
         end
@@ -385,32 +479,43 @@ end
 
 portrule = function()
     if args_map.verbose then print("\nportrule") end
+    return false
 end
 
 -- Finish writing to file, delete state file
 postrule = function()
     if args_map.verbose then print("\npostrule") end
     Open_state("cleanup")
-    if args_map.interface ~= "--list" then write_to(files.results, "]\n", file_mode.append) end
+    if args_map.interface ~= "--list" then
+        write_to(files.results, "]\n", file_mode.append)
+    end
     Close_state("cleanup")
 end
 
-action = function(host, _)
-    if args_map.verbose then print("\naction") end
-    Open_state("action")
-    local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
-                                   string.byte(host.mac_addr, 1, #host.mac_addr)):upper()
+action = function(host, port)
+    if port then
+        return 0
+    else
+        if args_map.verbose then print(rt(host.os)) end
+        if args_map.verbose then print("\naction") end
+        Open_state("action")
+        local mac_addr = string.format('%02X:%02X:%02X:%02X:%02X:%02X',
+                                       string.byte(host.mac_addr, 1,
+                                                   #host.mac_addr)):upper()
 
-    local res = json.generate({
-        IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
-        MAC = mac_addr,
-        Vendor = get_manufacturer(mac_addr),
-        interface = args_map.interface
-    })
+        if args_map.verbose and host.os then print(host.os.name) end
+        local res = json.generate({
+            IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
+            MAC = mac_addr,
+            vend = get_manufacturer(mac_addr),
+            intf = args_map.interface,
+            OS = args_map.scan_type == "full" and host.os and host.os.name or ""
+        })
 
-    if args_map.verbose then print("Writing to " .. files.results) end
-    write_to(files.results, (args_map.first and "" or "\n,") .. res, file_mode.append)
+        write_to(files.results, (args_map.first and "" or "\n,") .. res,
+                 file_mode.append)
 
-    Close_state("action")
-    return 0
+        Close_state("action")
+        return 0
+    end
 end
