@@ -5,6 +5,12 @@
 args_output=""
 args_verbose=0
 args_scan_type="mini"
+args_interface=""
+nscan_type=
+nscan_filename=
+nscan_verbose=
+cat_command=
+nscan_script_args=
 
 # # When called, the process ends.
 # Args:
@@ -26,19 +32,13 @@ die() {
 # and it makes sense to remind the user how the script is supposed to be called.
 print_help() {
     printf '%s\n' "Convenient wrapper for nscan.nse network scanner script, used by nmap."
-    printf 'Usage: %s [-t|--scan-type <arg>] [-o|--output <arg>] [-v|--verbose] [-h|--help] [--] <interface-1> [<interface-2>] ... [<interface-n>] ...\n' "$0"
-    printf '\t%s\n' "<interface>: Interfaces to scan on."
-    printf '\t%s\n' "-t, --scan-type: Type of scan to perform. Accepted values: full, mini. (default: 'mini')"
-    printf '\t%s\n' "-o, --output: File to write scan results to. (default: '{date and time of script's start}')"
-    printf '\t%s\n' "-v, --verbose: Print diagnostic information from the script to console. Also turns on nmap's debug mode (-d). (off by default)"
-    printf '\t%s\n' "-h, --help: Prints help"
-}
-
-# Check that we receive expected amount of positional arguments.
-# Return 0 if everything is OK, 1 if we have too little arguments.
-handle_passed_args_count() {
-    _required_args_string="'interface'"
-    test "${_positionals_count}" -ge 1 || _PRINT_HELP=yes die "FATAL ERROR: Not enough positional arguments - we require at least 1 (namely: $_required_args_string), but got only ${_positionals_count}." 1
+    printf 'Usage: %s [-t|--scan-type <arg>] [-o|--output <arg>] [-l|--list] [-v|--verbose] [-h|--help] [--] <interface>\n' "$0"
+    printf '\t%s\t%s\n' "<interface>" "Interface to scan on."
+    printf '\t%s\t%s\n' "-t, --scan-type" "Type of scan to perform. Accepted values: full, mini. (default: 'mini')"
+    printf '\t%s\t%s\n' "-o, --output" "File to write scan results to. (default: '{date and time of script's start}')"
+    printf '\t%s\t%s\n' "-l, --list" "List interfaces available for scanning. Does not perform any scanning. (off by default)"
+    printf '\t%s\t%s\n' "-v, --verbose" "Print diagnostic information from the script to console. Specifying this twice (-v -v) also turns on this script's command printing and nmap's debug mode (-d). (off by default)"
+    printf '\t%s\t%s\n' "-h, --help" "Prints help"
 }
 
 # The parsing of the command-line
@@ -51,6 +51,10 @@ while :; do
 
     -v | --verbose)
         args_verbose=$((args_verbose + 1)) # Each -v argument adds 1 to verbosity.
+        ;;
+
+    -l | --list)
+        args_interface="--list" # List interfaces instead of scanning.
         ;;
 
     -o | --output) # Takes an option argument, ensuring it has been specified.
@@ -106,44 +110,40 @@ while :; do
     shift
 done
 
-# Rest of the program here.
-# If there are input files (for example) that follow the options, they
-# will remain in the "$@" positional parameters.
-
-args_interfaces="$*"
-
-echo
-echo "Value of --scan-type: $args_scan_type"
-echo "Value of --output: $args_output"
-echo "verbose is $args_verbose"
-echo "Got interfaces: $args_interfaces"
-echo
-
-mkdir /tmp/nscan
-
-nscan_type=", nscan.type=$args_scan_type"
-
-if [ "$args_output" != "" ]; then
-    nscan_filename="nscan.filename=$args_output"
+# Turn on command printing and nmap's debug mode if verbose was specified two or more times.
+if [ $args_verbose -gt 1 ]; then
+    set -x
+    debug_flag="-d"
 fi
 
+mkdir /tmp/nscan >/dev/null 2>&1
+
+if [ "$args_interface" = "" ]; then
+    args_interface=$1
+    if [ -z "$args_interface" ] || [ "$args_interface" = "" ]; then
+        printf 'ERROR: No interface specified. Did you mean "%s --list" ?\n' "$0" >&2
+        exit 1
+    fi
+fi
+if [ "$args_output" != "" ]; then
+    nscan_filename=", nscan.filename=$args_output"
+fi
 if [ $args_verbose -gt 0 ]; then
     if [ "$args_output" != "" ]; then
-        cat_command="&& cat $args_output"
+        cat_command="&& cat /tmp/nscan/$args_output"
     fi
-    nscan_verbose=", nscan.v=true' -d"
+    nscan_verbose=", nscan.v=true' $debug_flag"
 else
     nscan_verbose="'"
 fi
+nscan_interface=", nscan.interface=$args_interface"
+nscan_type="nscan.type=$args_scan_type"
 
-for i in $args_interfaces; do
-    nscan_interface="nscan.interface=$i"
+if [ "$args_scan_type" = "full" ]; then
+    eval "nmap -n -O -PR --send-eth --script nscan.nse --script-args '$nscan_type $nscan_interface $nscan_filename $nscan_verbose $cat_command"
+else
+    eval "nmap -n -sn -PR --send-eth --script nscan.nse --script-args '$nscan_type $nscan_interface $nscan_filename $nscan_verbose $cat_command"
+fi
 
-    nscan_script_args="'$nscan_filename $nscan_type $nscan_interface $nscan_verbose"
-
-    echo "-----------------"
-    echo "nscan_script_args: $nscan_script_args"
-    echo "cat_command: $cat_command"
-done
-# nmap -n -sn -PR --send-eth --script nscan.nse --script-args $nscan_script_args $cat_command
-# '$nscan_filename, nscan.interface=--list, nscan.type=mini, nscan.v=true'
+# Turn command printing off
+set +x
