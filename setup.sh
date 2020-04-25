@@ -21,7 +21,7 @@ x86_64)
     ;;
 esac
 
-if ! wget -q --spider https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so; then
+if ! curl --output /dev/null --silent --head --fail "https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so"; then
     echo "ERROR: This architecture ($(uname --m)) is not supported." >&2
     exit 1
 fi
@@ -31,11 +31,12 @@ mkdir /tmp/nscan && cd /tmp/nscan || {
     exit 2
 }
 
-wget https://raw.githubusercontent.com/Margiris/nscan/master/nscan.lua
+curl https://raw.githubusercontent.com/Margiris/nscan/master/nscan.lua >nscan.lua
 mv ./nscan.lua /usr/share/nmap/scripts/nscan.nse
 
-wget https://raw.githubusercontent.com/Margiris/nscan/master/nscan.sh
+curl https://raw.githubusercontent.com/Margiris/nscan/master/nscan.sh >nscan.sh
 chmod +x ./nscan.sh
 mv ./nscan.sh /bin/nscan
 
-wget -O ubus_5_3.so https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so
+curl -O ubus_5_3.so https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so
+mv ubus_5_3.so /usr/lib/lua/
