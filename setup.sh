@@ -32,12 +32,20 @@ cd /tmp/nscan || {
     exit 2
 }
 
-curl https://raw.githubusercontent.com/Margiris/nscan/master/nscan.lua >nscan.lua
-mv ./nscan.lua /usr/share/nmap/scripts/nscan.nse
+files="nscan.lua nscan.sh ubus/ubus_5_3_$device.so"
 
-curl https://raw.githubusercontent.com/Margiris/nscan/master/nscan.sh >nscan.sh
+for file in $files; do
+    echo "Downloading $file..."
+    test curl --fail https://raw.githubusercontent.com/Margiris/nscan/master/$file >$file || {
+        echo "Failed to download $file. Aborting."
+        exit 3
+    }
+done
+
+echo "Installing..."
+mv ./nscan.lua /usr/share/nmap/scripts/nscan.nse
 chmod +x ./nscan.sh
 mv ./nscan.sh /bin/nscan
+mv ubus_5_3$device.so /usr/lib/lua/ubus_5_3.so
 
-curl https://github.com/Margiris/nscan/raw/master/ubus/ubus_5_3_$device.so >ubus_5_3.so
-mv ubus_5_3.so /usr/lib/lua/
+echo "Installed."
