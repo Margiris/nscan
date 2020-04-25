@@ -7,7 +7,7 @@ license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 
 local args_map = {
     output_filename = stdnse.get_script_args({"nscan.filename"}),
-    interface = stdnse.get_script_args({"nscan.device"}),
+    interface = stdnse.get_script_args({"nscan.interface"}),
     scan_type = stdnse.get_script_args({"nscan.type"}),
     verbose = stdnse.get_script_args({"nscan.v"}) == "true" and true or false,
     wireless = nil,
@@ -201,17 +201,7 @@ do --[[------------------------ IP functions ----------------------------
     end
 end
 
-local function get_manufacturer(mac_str)
-    local datafiles = require "datafiles"
-    local nmap = require "nmap"
-
-    local catch = function() return "Unknown" end
-    local try = nmap.new_try(catch)
-    local mac_prefixes = try(datafiles.parse_mac_prefixes())
-    local prefix = string.upper(string.sub(mac_str:gsub(':', ''), 1, 6))
-    return mac_prefixes[prefix] or "Unknown"
-end
-
+--------------------------- ubus functions ---------------------------
 local function get_interfaces_with_IPs(ubus_connection)
     local interfaces_with_IPs = {}
     for _, v in pairs(ubus_connection:call("network.interface", "dump", {}).interface) do
@@ -260,9 +250,11 @@ local function get_wireless_on_interface(interface, ubus_connection)
 
     local wireless = {}
 
-    for wireless_name, wireless_interfaces in pairs(interfaces_with_IPs.wireless) do
-        if wireless_interfaces[interfaces_with_IPs.wired[interface].interface] then
-            wireless[wireless_name] = wireless_interfaces
+    for w_name, w_interfaces in pairs(interfaces_with_IPs.wireless) do
+        for _, w_interface in pairs(w_interfaces) do
+            if w_interface == interfaces_with_IPs.wired[interface].interface then
+                wireless[w_name] = w_interfaces
+            end
         end
     end
 
@@ -276,6 +268,18 @@ local function get_wireless_clients_MACs(wireless_ap, ubus_connection)
         if details.authorized or details.preauth then table.insert(MACs, mac:upper()) end
     end
     return MACs
+end
+----------------------------------------------------------------------
+----------------------------- nmap stuff -----------------------------
+local function get_manufacturer(mac_str)
+    local datafiles = require "datafiles"
+    local nmap = require "nmap"
+
+    local catch = function() return "Unknown" end
+    local try = nmap.new_try(catch)
+    local mac_prefixes = try(datafiles.parse_mac_prefixes())
+    local prefix = string.upper(string.sub(mac_str:gsub(':', ''), 1, 6))
+    return mac_prefixes[prefix] or "Unknown"
 end
 
 local function add_targets(ip, mask)
@@ -365,7 +369,9 @@ hostrule = function(host)
                   get_interfaces_used_by_wireless(args_map.interface, conn)[host.interface]
     else
         for wireless, _ in pairs(get_wireless_on_interface(args_map.interface, conn)) do
+            if args_map.verbose then print(wireless) end
             for _, mac in pairs(get_wireless_clients_MACs(wireless, conn)) do
+                if args_map.verbose then print(mac, mac_addr, mac == mac_addr) end
                 if mac == mac_addr then dev_on_wireless = true end
             end
         end
@@ -375,6 +381,10 @@ hostrule = function(host)
     conn:close()
     Close_state("host")
     return ret
+end
+
+portrule = function()
+    if args_map.verbose then print("\nportrule") end
 end
 
 -- Finish writing to file, delete state file
@@ -394,10 +404,13 @@ action = function(host, _)
     local res = json.generate({
         IP = table.concat({string.byte(host.bin_ip, 1, #host.bin_ip)}, "."),
         MAC = mac_addr,
-        Vendor = get_manufacturer(mac_addr)
+        Vendor = get_manufacturer(mac_addr),
+        interface = args_map.interface
     })
+
     if args_map.verbose then print("Writing to " .. files.results) end
     write_to(files.results, (args_map.first and "" or "\n,") .. res, file_mode.append)
+
     Close_state("action")
     return 0
 end
