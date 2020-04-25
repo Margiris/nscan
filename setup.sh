@@ -27,6 +27,8 @@ if ! curl --output /dev/null --silent --head --fail "https://github.com/Margiris
 fi
 
 mkdir /tmp/nscan
+mkdir /tmp/nscan/ubus
+
 cd /tmp/nscan || {
     echo "Failed to create temporary directory. Aborting." >&2
     exit 2
@@ -36,7 +38,7 @@ files="nscan.lua nscan.sh ubus/ubus_5_3_$device.so"
 
 for file in $files; do
     echo "Downloading $file..."
-    if ! curl --fail "https://raw.githubusercontent.com/Margiris/nscan/master/$file" >$file; then
+    if ! curl --fail "https://raw.githubusercontent.com/Margiris/nscan/master/$file" >"$file"; then
         echo "Failed to download $file. Aborting."
         exit 3
     fi
