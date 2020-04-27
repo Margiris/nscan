@@ -1,6 +1,6 @@
-SOURCES_D = nscand.c
+SOURCES_D = nscand.cc
 SOURCES_C =  nscanctl.c
-OBJS = $(SOURCES_C:.c=.o) $(SOURCES_D:.c=.o)
+OBJS = $(SOURCES_C:.c=.o) $(SOURCES_D:.cc=.o)
 DAEMON = nscand
 CLIENT = nscanctl
 RM = rm -f

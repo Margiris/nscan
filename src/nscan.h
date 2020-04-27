@@ -1,9 +1,10 @@
 #include <arpa/inet.h>
-// #include <errno.h>
+#include <unistd.h>
 
 // ctl
 #include <argp.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 
 // d

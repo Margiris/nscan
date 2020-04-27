@@ -1,5 +1,9 @@
 #include "nscan.h"
+#include "nmap/nmap.h"
 
+// #define DAEMONIZE
+
+#ifdef DAEMONIZE
 #define ERR(sockfd, format, ...)                                                                                \
     {                                                                                                           \
         syslog(LOG_INFO | LOG_DAEMON, "nscand.c:%d | errno=%d | " format "\n", __LINE__, errno, ##__VA_ARGS__); \
@@ -7,18 +11,33 @@
     }
 #define WARN(format, ...) syslog(LOG_INFO | LOG_DAEMON, "nscand.c:%d | warning | " format "\n", __LINE__, ##__VA_ARGS__);
 #define INFO(format, ...) syslog(LOG_INFO | LOG_DAEMON, "nscand.c:%d | info | " format "\n", __LINE__, ##__VA_ARGS__);
+#else
+#define ERR(sockfd, format, ...)                                                         \
+    {                                                                                    \
+        printf("nscand.c:%d | errno=%d | " format "\n", __LINE__, errno, ##__VA_ARGS__); \
+        exit_daemon(sockfd, errno);                                                      \
+    }
+#define WARN(format, ...) printf("nscand.c:%d | warning | " format "\n", __LINE__, ##__VA_ARGS__);
+#define INFO(format, ...) printf("nscand.c:%d | info | " format "\n", __LINE__, ##__VA_ARGS__);
+#endif
 
 void process_received_data(int sockfd, struct nscan_data data_received);
 void exit_daemon(int sockfd, int ret);
 
 int main()
 {
-    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_addr.s_addr = INADDR_ANY, .sin_port = htons(PORT)};
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(PORT);
+    addr.sin_addr.s_addr = INADDR_ANY;
+
     int opt = 1;
     int addrlen = sizeof(addr);
 
-    // if (daemon(0, 0))
-    //     ERR(0, "Can't daemonize nscan");
+#ifdef DAEMONIZE
+    if (daemon(0, 0))
+        ERR(0, "Can't daemonize nscan");
+#endif
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd <= 0)
@@ -28,7 +47,7 @@ int main()
         ERR(sockfd, "Can't set socket options");
 
     if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-        ERR(sockfd, "Can't bind socket to %s", addr.sin_addr.s_addr);
+        ERR(sockfd, "Can't bind socket to %d", addr.sin_addr.s_addr);
 
     INFO("nscand daemon started");
 
@@ -37,7 +56,7 @@ int main()
         struct nscan_data data_received = {0};
 
         if (listen(sockfd, 1) < 0)
-            ERR(sockfd, "Can't listen on socket %d (%s)", sockfd, addr.sin_addr.s_addr);
+            ERR(sockfd, "Can't listen on socket %d (%d)", sockfd, addr.sin_addr.s_addr);
 
         int data_sockfd = accept(sockfd, (struct sockaddr *)&addr, (socklen_t *)&addrlen);
         if (data_sockfd < 0)
@@ -58,6 +77,9 @@ void process_received_data(int sockfd, struct nscan_data data_received)
         exit_daemon(sockfd, 0);
     if (data_received.action == ACTION_FULL || data_received.action == ACTION_MINI)
     {
+        int test = nmap_main(0, NULL);
+        printf("%d\n", test);
+
         struct response response = {0};
         response.f = 4;
         response.result = data_received.action == ACTION_FULL ? RESULT_FAIL : RESULT_SUCCESS;
